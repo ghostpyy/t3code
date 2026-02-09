@@ -6,8 +6,10 @@ import { WS_CHANNELS, WS_METHODS, type WsPush, type WsResponse } from "@acme/con
 function connectWs(port: number): Promise<WebSocket> {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(`ws://localhost:${port}`);
-    ws.onopen = () => resolve(ws);
-    ws.onerror = () => reject(new Error("WebSocket connection failed"));
+    ws.addEventListener("open", () => resolve(ws));
+    ws.addEventListener("error", () =>
+      reject(new Error("WebSocket connection failed")),
+    );
   });
 }
 

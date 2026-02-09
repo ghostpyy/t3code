@@ -93,23 +93,23 @@ export class WsTransport {
 
     const ws = new WebSocket(this.url);
 
-    ws.onopen = () => {
+    ws.addEventListener("open", () => {
       this.ws = ws;
       this.reconnectAttempt = 0;
-    };
+    });
 
-    ws.onmessage = (event) => {
+    ws.addEventListener("message", (event) => {
       this.handleMessage(event.data);
-    };
+    });
 
-    ws.onclose = () => {
+    ws.addEventListener("close", () => {
       this.ws = null;
       this.scheduleReconnect();
-    };
+    });
 
-    ws.onerror = () => {
-      // onclose will fire after onerror
-    };
+    ws.addEventListener("error", () => {
+      // close event will fire after error
+    });
   }
 
   private handleMessage(raw: unknown) {

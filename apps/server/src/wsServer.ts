@@ -121,10 +121,8 @@ export function createServer(options: ServerOptions) {
     clients.add(ws);
 
     // Send welcome message with project info
-    const projectName =
-      cwd.split("/").filter(Boolean).pop() ??
-      cwd.split("\\").filter(Boolean).pop() ??
-      "project";
+    const segments = cwd.split(/[/\\]/).filter(Boolean);
+    const projectName = segments[segments.length - 1] ?? "project";
 
     const welcome: WsPush = {
       type: "push",
