@@ -1749,6 +1749,112 @@ async function main() {
       throw new Error("Smoke test failed: unexpected agent exit event payload.");
     }
 
+    const killableAgentResponse = await sendWsRequest(ws, {
+      id: "smoke-agent-spawn-killable",
+      method: "agent.spawn",
+      params: {
+        command: process.execPath,
+        args: ["-e", "setInterval(() => {}, 1_000);"],
+        cwd: appRoot,
+      },
+    });
+    if (killableAgentResponse.ok !== true || typeof killableAgentResponse.result !== "string") {
+      throw new Error("Smoke test failed: expected successful killable agent.spawn response.");
+    }
+    const killableAgentSessionId = killableAgentResponse.result;
+    if (killableAgentSessionId.length === 0) {
+      throw new Error("Smoke test failed: killable agent session id is empty.");
+    }
+
+    const killableExitPromise = waitForWsEvent(
+      ws,
+      (message) =>
+        message.channel === "agent:exit" && message.payload?.sessionId === killableAgentSessionId,
+      "agent-kill-exit",
+      20_000,
+    );
+    const killResponse = await sendWsRequest(ws, {
+      id: "smoke-agent-kill",
+      method: "agent.kill",
+      params: killableAgentSessionId,
+    });
+    if (killResponse.ok !== true) {
+      throw new Error("Smoke test failed: expected successful agent.kill response.");
+    }
+    const killableExitEvent = await killableExitPromise;
+    if (
+      killableExitEvent.payload?.sessionId !== killableAgentSessionId ||
+      (killableExitEvent.payload?.code === 0 && killableExitEvent.payload?.signal === null)
+    ) {
+      throw new Error("Smoke test failed: expected killed agent exit event payload.");
+    }
+
+    const writableAgentResponse = await sendWsRequest(ws, {
+      id: "smoke-agent-spawn-writable",
+      method: "agent.spawn",
+      params: {
+        command: process.execPath,
+        args: [
+          "-e",
+          "process.stdin.setEncoding('utf8'); process.stdin.once('data', (data) => { process.stdout.write('smoke-agent-write:' + data); process.exit(0); });",
+        ],
+        cwd: appRoot,
+      },
+    });
+    if (writableAgentResponse.ok !== true || typeof writableAgentResponse.result !== "string") {
+      throw new Error("Smoke test failed: expected successful writable agent.spawn response.");
+    }
+    const writableAgentSessionId = writableAgentResponse.result;
+    if (writableAgentSessionId.length === 0) {
+      throw new Error("Smoke test failed: writable agent session id is empty.");
+    }
+
+    const writableOutputPromise = waitForWsEvent(
+      ws,
+      (message) =>
+        message.channel === "agent:output" &&
+        message.payload?.sessionId === writableAgentSessionId &&
+        message.payload?.stream === "stdout" &&
+        typeof message.payload?.data === "string" &&
+        message.payload.data.includes("smoke-agent-write:ping"),
+      "agent-write-output",
+      20_000,
+    );
+    const writableExitPromise = waitForWsEvent(
+      ws,
+      (message) =>
+        message.channel === "agent:exit" &&
+        message.payload?.sessionId === writableAgentSessionId &&
+        message.payload?.code === 0,
+      "agent-write-exit",
+      20_000,
+    );
+    const writeResponse = await sendWsRequest(ws, {
+      id: "smoke-agent-write",
+      method: "agent.write",
+      params: {
+        sessionId: writableAgentSessionId,
+        data: "ping\n",
+      },
+    });
+    if (writeResponse.ok !== true) {
+      throw new Error("Smoke test failed: expected successful agent.write response.");
+    }
+    const writableOutputEvent = await writableOutputPromise;
+    if (
+      writableOutputEvent.payload?.sessionId !== writableAgentSessionId ||
+      writableOutputEvent.payload?.stream !== "stdout"
+    ) {
+      throw new Error("Smoke test failed: unexpected writable agent output payload.");
+    }
+    const writableExitEvent = await writableExitPromise;
+    if (
+      writableExitEvent.payload?.sessionId !== writableAgentSessionId ||
+      writableExitEvent.payload?.code !== 0
+    ) {
+      throw new Error("Smoke test failed: unexpected writable agent exit payload.");
+    }
+
     const duplicateTokenWhileConnectedWs = new WebSocket(
       `${parsedWsUrl.origin}${parsedWsUrl.pathname}?token=${encodeURIComponent(
         parsedWsUrl.searchParams.get("token") ?? "",
