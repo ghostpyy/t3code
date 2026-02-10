@@ -576,6 +576,19 @@ describe("wsNativeApi", () => {
     await expect(request).rejects.toThrow("websocket errored.");
   });
 
+  it("falls back to generic message when websocket errors with whitespace-only message", async () => {
+    setWindowSearch("?ws=ws%3A%2F%2F127.0.0.1%3A4491");
+    const { getOrCreateWsNativeApi } = await import("./wsNativeApi");
+    const api = getOrCreateWsNativeApi();
+
+    const request = api.todos.list();
+    const socket = MockWebSocket.instances[0];
+    await waitForCondition(() => (socket?.sentMessages.length ?? 0) > 0);
+    socket?.emitErrorEvent({ message: "   " });
+
+    await expect(request).rejects.toThrow("websocket errored.");
+  });
+
   it("includes close reason details when pending request disconnects", async () => {
     setWindowSearch("?ws=ws%3A%2F%2F127.0.0.1%3A4450");
     const { getOrCreateWsNativeApi } = await import("./wsNativeApi");
@@ -1713,6 +1726,23 @@ describe("wsNativeApi", () => {
 
     await expect(api.todos.list()).rejects.toThrow(
       "Failed to connect to local t3 runtime: websocket error (nested-open-error).",
+    );
+  });
+
+  it("uses trimmed nested websocket open error message when direct message is whitespace", async () => {
+    setWindowSearch("?ws=ws%3A%2F%2F127.0.0.1%3A4492");
+    MockWebSocket.failOpen = true;
+    MockWebSocket.failOpenEvent = {
+      message: "   ",
+      error: {
+        message: "  nested-open-error-trimmed  ",
+      },
+    };
+    const { getOrCreateWsNativeApi } = await import("./wsNativeApi");
+    const api = getOrCreateWsNativeApi();
+
+    await expect(api.todos.list()).rejects.toThrow(
+      "Failed to connect to local t3 runtime: websocket error (nested-open-error-trimmed).",
     );
   });
 

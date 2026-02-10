@@ -101,17 +101,32 @@ function runtimeConnectErrorFromSocketError(event: unknown) {
 
 function socketErrorMessage(event: unknown) {
   const directMessage = (event as { message?: unknown } | null)?.message;
-  if (typeof directMessage === "string" && directMessage.length > 0) {
-    return directMessage;
+  const normalizedDirectMessage = normalizeSocketErrorMessage(directMessage);
+  if (normalizedDirectMessage) {
+    return normalizedDirectMessage;
   }
 
   const nestedError = (event as { error?: unknown } | null)?.error;
   const nestedMessage = (nestedError as { message?: unknown } | null)?.message;
-  if (typeof nestedMessage === "string" && nestedMessage.length > 0) {
-    return nestedMessage;
+  const normalizedNestedMessage = normalizeSocketErrorMessage(nestedMessage);
+  if (normalizedNestedMessage) {
+    return normalizedNestedMessage;
   }
 
   return null;
+}
+
+function normalizeSocketErrorMessage(value: unknown) {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const normalized = value.trim();
+  if (normalized.length === 0) {
+    return null;
+  }
+
+  return normalized;
 }
 
 class WsNativeApiClient {
