@@ -1695,6 +1695,26 @@ async function main() {
       throw new Error("Smoke test failed: terminal.run response payload mismatch.");
     }
 
+    const timedOutTerminalRunResponse = await sendWsRequest(ws, {
+      id: "smoke-terminal-run-timeout",
+      method: "terminal.run",
+      params: {
+        command: `${JSON.stringify(process.execPath)} -e "setTimeout(() => {}, 2000)"`,
+        cwd: appRoot,
+        timeoutMs: 200,
+      },
+    });
+    if (
+      timedOutTerminalRunResponse.ok !== true ||
+      timedOutTerminalRunResponse.result?.timedOut !== true ||
+      typeof timedOutTerminalRunResponse.result?.stdout !== "string" ||
+      typeof timedOutTerminalRunResponse.result?.stderr !== "string" ||
+      (timedOutTerminalRunResponse.result?.code !== null &&
+        typeof timedOutTerminalRunResponse.result?.code !== "number")
+    ) {
+      throw new Error("Smoke test failed: expected terminal.run timeout result payload.");
+    }
+
     const spawnedAgentResponse = await sendWsRequest(ws, {
       id: "smoke-agent-spawn",
       method: "agent.spawn",
