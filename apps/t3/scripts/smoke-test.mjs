@@ -2001,6 +2001,110 @@ async function main() {
       throw new Error("Smoke test failed: expected structured invalid-cwd terminal.run error.");
     }
 
+    const invalidProviderRespondResponse = await sendWsRequest(ws, {
+      id: "smoke-provider-respond-invalid",
+      method: "providers.respondToRequest",
+      params: {
+        sessionId: "sess-1",
+        requestId: "req-1",
+        decision: "invalid-decision",
+      },
+    });
+    if (
+      invalidProviderRespondResponse.ok !== false ||
+      invalidProviderRespondResponse.error?.code !== "request_failed" ||
+      typeof invalidProviderRespondResponse.error?.message !== "string" ||
+      invalidProviderRespondResponse.error.message.length === 0
+    ) {
+      throw new Error(
+        `Smoke test failed: expected structured invalid providers.respondToRequest error, got ${JSON.stringify(
+          invalidProviderRespondResponse,
+        )}.`,
+      );
+    }
+
+    const invalidProviderSendTurnResponse = await sendWsRequest(ws, {
+      id: "smoke-provider-send-turn-invalid",
+      method: "providers.sendTurn",
+      params: {
+        sessionId: "sess-1",
+        input: "",
+      },
+    });
+    if (
+      invalidProviderSendTurnResponse.ok !== false ||
+      invalidProviderSendTurnResponse.error?.code !== "request_failed" ||
+      typeof invalidProviderSendTurnResponse.error?.message !== "string" ||
+      invalidProviderSendTurnResponse.error.message.length === 0
+    ) {
+      throw new Error(
+        `Smoke test failed: expected structured invalid providers.sendTurn error, got ${JSON.stringify(
+          invalidProviderSendTurnResponse,
+        )}.`,
+      );
+    }
+
+    const invalidProviderStartSessionResponse = await sendWsRequest(ws, {
+      id: "smoke-provider-start-session-invalid",
+      method: "providers.startSession",
+      params: {
+        provider: "unknown-provider",
+      },
+    });
+    if (
+      invalidProviderStartSessionResponse.ok !== false ||
+      invalidProviderStartSessionResponse.error?.code !== "request_failed" ||
+      typeof invalidProviderStartSessionResponse.error?.message !== "string" ||
+      invalidProviderStartSessionResponse.error.message.length === 0
+    ) {
+      throw new Error(
+        `Smoke test failed: expected structured invalid providers.startSession error, got ${JSON.stringify(
+          invalidProviderStartSessionResponse,
+        )}.`,
+      );
+    }
+
+    const invalidProviderInterruptResponse = await sendWsRequest(ws, {
+      id: "smoke-provider-interrupt-invalid",
+      method: "providers.interruptTurn",
+      params: {
+        sessionId: "",
+        turnId: "turn-1",
+      },
+    });
+    if (
+      invalidProviderInterruptResponse.ok !== false ||
+      invalidProviderInterruptResponse.error?.code !== "request_failed" ||
+      typeof invalidProviderInterruptResponse.error?.message !== "string" ||
+      invalidProviderInterruptResponse.error.message.length === 0
+    ) {
+      throw new Error(
+        `Smoke test failed: expected structured invalid providers.interruptTurn error, got ${JSON.stringify(
+          invalidProviderInterruptResponse,
+        )}.`,
+      );
+    }
+
+    const invalidProviderStopResponse = await sendWsRequest(ws, {
+      id: "smoke-provider-stop-invalid",
+      method: "providers.stopSession",
+      params: {
+        sessionId: "",
+      },
+    });
+    if (
+      invalidProviderStopResponse.ok !== false ||
+      invalidProviderStopResponse.error?.code !== "request_failed" ||
+      typeof invalidProviderStopResponse.error?.message !== "string" ||
+      invalidProviderStopResponse.error.message.length === 0
+    ) {
+      throw new Error(
+        `Smoke test failed: expected structured invalid providers.stopSession error, got ${JSON.stringify(
+          invalidProviderStopResponse,
+        )}.`,
+      );
+    }
+
     const replacedClientClosed = waitForCloseCode(ws, 4000, "replaced-client");
     const replacementWs = new WebSocket(wsUrl);
     await new Promise((resolve, reject) => {
