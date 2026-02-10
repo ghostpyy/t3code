@@ -203,6 +203,15 @@ describe("runtimeApiServer", () => {
     ).rejects.toThrow("Invalid runtime port");
   });
 
+  it("rejects startup when runtime port is null", async () => {
+    await expect(
+      startRuntimeApiServer({
+        port: null as unknown as number,
+        launchCwd: process.cwd(),
+      }),
+    ).rejects.toThrow("Invalid runtime port");
+  });
+
   it("rejects startup when runtime port is infinite", async () => {
     await expect(
       startRuntimeApiServer({
