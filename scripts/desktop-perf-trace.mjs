@@ -70,14 +70,14 @@ function mb(bytes) {
   return bytes / (1024 * 1024);
 }
 
-function parseNumericEnv({ name, value, predicate, expectation }) {
+function parseNumericEnv({ name, value, predicate, expectation, fallback }) {
   if (typeof value !== "string") {
     return null;
   }
   const raw = value.trim();
   if (raw.length === 0) {
     console.warn(
-      `[desktop-perf] invalid ${name}="${value}" (expected ${expectation}); using default`,
+      `[desktop-perf] invalid ${name}="${value}" (expected ${expectation}); using ${fallback}`,
     );
     return null;
   }
@@ -89,7 +89,7 @@ function parseNumericEnv({ name, value, predicate, expectation }) {
     };
   }
   console.warn(
-    `[desktop-perf] invalid ${name}="${value}" (expected ${expectation}); using default`,
+    `[desktop-perf] invalid ${name}="${value}" (expected ${expectation}); using ${fallback}`,
   );
   return null;
 }
@@ -100,6 +100,7 @@ function resolveNonNegativeNumberEnv({ name, value, fallback }) {
     value,
     predicate: (parsed) => parsed >= 0,
     expectation: "non-negative number",
+    fallback,
   });
   return resolved?.parsed ?? fallback;
 }
@@ -110,6 +111,7 @@ function resolveNonNegativeIntegerEnv({ name, value, fallback }) {
     value,
     predicate: (parsed) => parsed >= 0,
     expectation: "non-negative number",
+    fallback,
   });
   if (!resolved) {
     return fallback;
@@ -129,6 +131,7 @@ function resolvePositiveIntegerEnv({ name, value, fallback }) {
     value,
     predicate: (parsed) => parsed > 0,
     expectation: "positive number",
+    fallback,
   });
   if (!resolved) {
     return fallback;
