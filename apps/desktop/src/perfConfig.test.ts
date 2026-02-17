@@ -6,6 +6,8 @@ describe("shouldRunTerminalPerfInteractions", () => {
   it("defaults to enabled outside CI when env is unset", () => {
     expect(shouldRunTerminalPerfInteractions({ CI: "false" })).toBe(true);
     expect(shouldRunTerminalPerfInteractions({ CI: "0" })).toBe(true);
+    expect(shouldRunTerminalPerfInteractions({ CI: "off" })).toBe(true);
+    expect(shouldRunTerminalPerfInteractions({ CI: "no" })).toBe(true);
     expect(shouldRunTerminalPerfInteractions({ CI: undefined })).toBe(true);
   });
 
@@ -108,5 +110,17 @@ describe("shouldRunTerminalPerfInteractions", () => {
         CI: "ON",
       }),
     ).toBe(false);
+    expect(
+      shouldRunTerminalPerfInteractions({
+        T3CODE_DESKTOP_PERF_RUN_TERMINAL: " ",
+        CI: "true",
+      }),
+    ).toBe(false);
+    expect(
+      shouldRunTerminalPerfInteractions({
+        T3CODE_DESKTOP_PERF_RUN_TERMINAL: " ",
+        CI: "false",
+      }),
+    ).toBe(true);
   });
 });
