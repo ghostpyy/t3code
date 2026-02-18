@@ -72,7 +72,7 @@ const persistedThreadSchema = z.object({
 const persistedStateBodySchema = z.object({
   projects: z.array(persistedProjectSchema),
   threads: z.array(persistedThreadSchema),
-  activeThreadId: z.string().min(1).nullable(),
+  activeThreadId: z.string().min(1).nullable().optional(),
 });
 
 const runtimeModeSchema = z.enum(["approval-required", "full-access"]);
@@ -123,7 +123,6 @@ const persistedStateSchema = z.union([
 export interface PersistedStoreSnapshot {
   projects: Project[];
   threads: Thread[];
-  activeThreadId: string | null;
   runtimeMode: RuntimeMode;
 }
 
@@ -299,15 +298,9 @@ export function hydratePersistedState(
   const threads = parsedState.data.threads
     .map((thread) => hydrateThread(thread, isLegacyPayload))
     .filter((thread) => projectIds.has(thread.projectId));
-  const hasActiveThread = Boolean(
-    parsedState.data.activeThreadId &&
-    threads.some((thread) => thread.id === parsedState.data.activeThreadId),
-  );
-
   return {
     projects,
     threads,
-    activeThreadId: hasActiveThread ? parsedState.data.activeThreadId : (threads[0]?.id ?? null),
     runtimeMode:
       "runtimeMode" in parsedState.data ? parsedState.data.runtimeMode : DEFAULT_RUNTIME_MODE,
   };
@@ -354,7 +347,6 @@ export function toPersistedState(
       branch: thread.branch,
       worktreePath: thread.worktreePath,
     })),
-    activeThreadId: state.activeThreadId,
     runtimeMode: state.runtimeMode,
   };
 }

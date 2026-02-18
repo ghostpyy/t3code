@@ -106,7 +106,6 @@ describe("hydratePersistedState", () => {
       { id: `group-${DEFAULT_THREAD_TERMINAL_ID}`, terminalIds: [DEFAULT_THREAD_TERMINAL_ID] },
     ]);
     expect(hydrated?.threads[0]?.activeTerminalGroupId).toBe(`group-${DEFAULT_THREAD_TERMINAL_ID}`);
-    expect(hydrated?.activeThreadId).toBe("t-1");
     expect(hydrated?.runtimeMode).toBe("full-access");
   });
 
@@ -323,7 +322,6 @@ describe("toPersistedState", () => {
         },
       ],
       threads: [thread],
-      activeThreadId: "t-1",
       runtimeMode: "full-access",
     });
 
