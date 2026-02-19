@@ -67,7 +67,10 @@ function EventRouter() {
         void invalidateGitQueries(queryClient);
       }
       if (event.method === "checkpoint/captured") {
-        void queryClient.invalidateQueries({ queryKey: providerQueryKeys.all });
+        void queryClient.invalidateQueries({
+          queryKey: providerQueryKeys.all,
+          predicate: (query) => query.state.status !== "success",
+        });
       }
       dispatch({
         type: "APPLY_EVENT",

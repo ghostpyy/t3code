@@ -1463,6 +1463,7 @@ export default function ChatView() {
             .map((checkpoint) => [checkpoint.id, checkpoint.turnCount] as const),
         );
         if (Object.keys(checkpointTurnCountByTurnId).length === 0) {
+          checkpointTurnCountSyncFingerprintRef.current.delete(syncKey);
           return;
         }
         dispatch({
