@@ -79,6 +79,8 @@ function openBunSqliteDatabase(
 export function openSqliteDatabase(dbPath: string): SqliteDatabase {
   const requireFn = createRequire(path.join(process.cwd(), "t3code-sqlite-adapter.cjs"));
 
+  console.log(process, globalThis, typeof Bun);
+
   if (process.versions.bun) {
     // Development mode runs in Bun, so use Bun's SQLite adapter
     return openBunSqliteDatabase(requireFn, dbPath);

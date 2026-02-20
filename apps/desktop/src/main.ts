@@ -324,14 +324,8 @@ function resolveBackendLaunch(backendEntry: string): {
     };
   }
 
-  if (isDevelopment) {
-    return {
-      command: "bun",
-      args: [backendEntry],
-      env: backendEnv(),
-    };
-  }
-
+  // Default to Node-mode execution under Electron in both dev and production.
+  // This matches main and avoids runtime-specific PTY behavior differences.
   return {
     command: process.execPath,
     args: [backendEntry],
