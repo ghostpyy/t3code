@@ -73,5 +73,7 @@ Use these as implementation references when designing protocol handling, UX flow
 
 - The `contracts` package must be built before `web` or `server` can typecheck or run. `bun run dev` and `bun run typecheck` handle this automatically via turbo dependency graph.
 - Sending messages in the UI requires a valid `OPENAI_API_KEY` (or Codex auth). Without it, turns fail with a 401 error — the rest of the UI still works fine.
+- **Codex auth**: The Codex CLI stores credentials in `~/.codex/auth.json`, NOT from `OPENAI_API_KEY` env var directly. To authenticate, run `echo "$OPENAI_API_KEY" | codex login --with-api-key`. The `globalPassThroughEnv` in `turbo.json` ensures the env var reaches child processes, but codex reads its own auth store.
 - The server uses `node:sqlite` (experimental in Node 24) — you will see `ExperimentalWarning` in test output; this is expected.
 - Avoid `bun run build` in dev — the user prefers not to run build commands as they can interfere with the dev environment. Use `bun run typecheck` instead.
+- **Turbo strict env mode**: Since `globalEnv` is configured in `turbo.json`, turbo only passes declared env vars to child processes. Add new vars to `globalEnv` (cache-relevant) or `globalPassThroughEnv` (pass-through only) as needed.
