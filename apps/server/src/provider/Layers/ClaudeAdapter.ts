@@ -40,12 +40,7 @@ import {
   type UserInputQuestion,
   ClaudeCodeEffort,
 } from "@t3tools/contracts";
-import {
-  applyClaudePromptEffortPrefix,
-  resolveApiModelId,
-  resolveEffort,
-  trimOrNull,
-} from "@t3tools/shared/model";
+import { applyClaudePromptEffortPrefix, resolveEffort, trimOrNull } from "@t3tools/shared/model";
 import {
   Cause,
   DateTime,
@@ -65,6 +60,7 @@ import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { getClaudeModelCapabilities } from "./ClaudeProvider.ts";
+import { resolveClaudeApiModelId } from "./ClaudeModelId.ts";
 import {
   ProviderAdapterProcessError,
   ProviderAdapterRequestError,
@@ -2732,7 +2728,7 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
         const modelSelection =
           input.modelSelection?.provider === "claudeAgent" ? input.modelSelection : undefined;
         const caps = getClaudeModelCapabilities(modelSelection?.model);
-        const apiModelId = modelSelection ? resolveApiModelId(modelSelection) : undefined;
+        const apiModelId = modelSelection ? resolveClaudeApiModelId(modelSelection) : undefined;
         const effort = (resolveEffort(caps, modelSelection?.options?.effort) ??
           null) as ClaudeCodeEffort | null;
         const fastMode = modelSelection?.options?.fastMode === true && caps.supportsFastMode;
@@ -2897,7 +2893,7 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
         }
 
         if (modelSelection?.model) {
-          const apiModelId = resolveApiModelId(modelSelection);
+          const apiModelId = resolveClaudeApiModelId(modelSelection);
           yield* Effect.tryPromise({
             try: () => context.query.setModel(apiModelId),
             catch: (cause) => toRequestError(input.threadId, "turn/setModel", cause),

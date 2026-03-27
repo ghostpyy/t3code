@@ -127,7 +127,7 @@ const CursorModelOptionsPatch = Schema.Struct({
   reasoning: Schema.optionalKey(CursorModelOptions.fields.reasoning),
   fastMode: Schema.optionalKey(CursorModelOptions.fields.fastMode),
   thinking: Schema.optionalKey(CursorModelOptions.fields.thinking),
-  claudeOpusTier: Schema.optionalKey(CursorModelOptions.fields.claudeOpusTier),
+  contextWindow: Schema.optionalKey(CursorModelOptions.fields.contextWindow),
 });
 
 const ModelSelectionPatch = Schema.Union([
