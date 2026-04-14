@@ -112,6 +112,8 @@ const authAccessHarness = vi.hoisted(() => {
   };
 });
 
+const mockConnectDesktopSshEnvironment = vi.fn();
+
 vi.mock("../../environments/runtime", () => {
   const primaryConnection = {
     kind: "primary" as const,
@@ -149,6 +151,7 @@ vi.mock("../../environments/runtime", () => {
       new URL(path, "http://localhost:3000").toString(),
     waitForSavedEnvironmentRegistryHydration: async () => undefined,
     addSavedEnvironment: vi.fn(),
+    connectDesktopSshEnvironment: mockConnectDesktopSshEnvironment,
     disconnectSavedEnvironment: vi.fn(),
     ensureEnvironmentConnectionBootstrapped: async () => undefined,
     getPrimaryEnvironmentConnection: () => primaryConnection,
@@ -256,6 +259,7 @@ function makeClientSession(input: {
 }
 
 const createDesktopBridgeStub = (overrides?: {
+  readonly discoverSshHosts?: DesktopBridge["discoverSshHosts"];
   readonly serverExposureState?: Awaited<ReturnType<DesktopBridge["getServerExposureState"]>>;
   readonly setServerExposureMode?: DesktopBridge["setServerExposureMode"];
 }): DesktopBridge => {
@@ -289,6 +293,50 @@ const createDesktopBridgeStub = (overrides?: {
     getSavedEnvironmentSecret: vi.fn().mockResolvedValue(null),
     setSavedEnvironmentSecret: vi.fn().mockResolvedValue(true),
     removeSavedEnvironmentSecret: vi.fn().mockResolvedValue(undefined),
+    discoverSshHosts: overrides?.discoverSshHosts ?? vi.fn().mockResolvedValue([]),
+    ensureSshEnvironment: vi.fn().mockImplementation(async (target) => ({
+      target,
+      httpBaseUrl: "http://127.0.0.1:3774/",
+      wsBaseUrl: "ws://127.0.0.1:3774/",
+      pairingToken: "ssh-pairing-token",
+    })),
+    fetchSshEnvironmentDescriptor: vi.fn().mockResolvedValue({
+      environmentId: "environment-ssh",
+      label: "SSH environment",
+      platform: {
+        os: "linux",
+        arch: "x64",
+      },
+      serverVersion: "0.0.0-test",
+      capabilities: {
+        repositoryIdentity: true,
+      },
+    }),
+    bootstrapSshBearerSession: vi.fn().mockResolvedValue({
+      authenticated: true,
+      role: "owner",
+      sessionMethod: "bearer-session-token",
+      expiresAt: "2026-05-01T12:00:00.000Z",
+      sessionToken: "ssh-bearer-token",
+    }),
+    fetchSshSessionState: vi.fn().mockResolvedValue({
+      authenticated: true,
+      auth: {
+        policy: "remote-reachable",
+        bootstrapMethods: ["one-time-token"],
+        sessionMethods: ["browser-session-cookie", "bearer-session-token"],
+        sessionCookieName: "t3_session",
+      },
+      role: "owner",
+      sessionMethod: "bearer-session-token",
+      expiresAt: "2026-05-01T12:00:00.000Z",
+    }),
+    issueSshWebSocketToken: vi.fn().mockResolvedValue({
+      token: "ssh-ws-token",
+      expiresAt: "2026-05-01T12:05:00.000Z",
+    }),
+    onSshPasswordPrompt: vi.fn(() => () => {}),
+    resolveSshPasswordPrompt: vi.fn().mockResolvedValue(undefined),
     getServerExposureState: vi.fn().mockResolvedValue(
       overrides?.serverExposureState ?? {
         mode: "local-only",
@@ -334,6 +382,7 @@ describe("GeneralSettingsPanel observability", () => {
     await __resetLocalApiForTests();
     localStorage.clear();
     authAccessHarness.reset();
+    mockConnectDesktopSshEnvironment.mockReset();
   });
 
   afterEach(async () => {
@@ -668,6 +717,70 @@ describe("GeneralSettingsPanel observability", () => {
     await expect
       .element(page.getByText("Reachable at http://192.168.1.44:3773"))
       .toBeInTheDocument();
+  });
+
+  it("adds desktop ssh environments from the add-environment dialog", async () => {
+    const discoverSshHosts = vi.fn().mockResolvedValue([
+      {
+        alias: "devbox",
+        hostname: "devbox.example.com",
+        username: "julius",
+        port: 22,
+        source: "ssh-config" as const,
+      },
+    ]);
+    window.desktopBridge = createDesktopBridgeStub({
+      discoverSshHosts,
+    });
+    mockConnectDesktopSshEnvironment.mockResolvedValue({
+      environmentId: EnvironmentId.make("environment-devbox"),
+      label: "Build box",
+      wsBaseUrl: "ws://127.0.0.1:3774/",
+      httpBaseUrl: "http://127.0.0.1:3774/",
+      createdAt: "2036-04-07T00:00:00.000Z",
+      lastConnectedAt: "2036-04-07T00:00:00.000Z",
+      desktopSsh: {
+        alias: "devbox.example.com",
+        hostname: "devbox.example.com",
+        username: "julius",
+        port: 2222,
+      },
+    });
+
+    setServerConfigSnapshot(createBaseServerConfig());
+
+    mounted = await render(
+      <AppAtomRegistryProvider>
+        <ConnectionsSettings />
+      </AppAtomRegistryProvider>,
+    );
+
+    await page.getByRole("button", { name: "Add environment", exact: true }).click();
+    await expect.element(page.getByText("Add Environment")).toBeInTheDocument();
+    await page.getByRole("button", { name: "SSH", exact: true }).click();
+    await vi.waitFor(() => {
+      expect(discoverSshHosts).toHaveBeenCalledTimes(1);
+    });
+    await expect.element(page.getByText("devbox")).toBeInTheDocument();
+
+    await page.getByText("Enter a host manually").click();
+    await page.getByLabelText("Label").fill("Build box");
+    await page.getByLabelText("SSH host or alias").fill("devbox.example.com");
+    await page.getByLabelText("Username").fill("julius");
+    await page.getByLabelText("Port").fill("2222");
+    await page.getByRole("button", { name: "Connect SSH host", exact: true }).click();
+
+    await vi.waitFor(() => {
+      expect(mockConnectDesktopSshEnvironment).toHaveBeenCalledWith(
+        {
+          alias: "devbox.example.com",
+          hostname: "devbox.example.com",
+          username: "julius",
+          port: 2222,
+        },
+        { label: "Build box" },
+      );
+    });
   });
 
   it("opens the logs folder in the preferred editor", async () => {
