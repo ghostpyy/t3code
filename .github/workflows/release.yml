@@ -354,7 +354,7 @@ jobs:
   publish_cli:
     name: Publish CLI to npm
     needs: [preflight, build]
-    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.build.result == 'success' }}
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.build.result == 'success' && github.repository_owner == 'pingdotgg' }}
     runs-on: ubuntu-24.04 # blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
     steps:
@@ -389,7 +389,7 @@ jobs:
   release:
     name: Publish GitHub Release
     needs: [preflight, build, publish_cli]
-    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.build.result == 'success' && needs.publish_cli.result == 'success' }}
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.build.result == 'success' && (needs.publish_cli.result == 'success' || needs.publish_cli.result == 'skipped') }}
     runs-on: ubuntu-24.04 # blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
     steps:
