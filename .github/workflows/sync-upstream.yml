@@ -1,0 +1,114 @@
+name: Sync from upstream
+
+on:
+  schedule:
+    - cron: "0 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+  actions: write
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Rebase main onto pingdotgg/t3code
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+          persist-credentials: true
+
+      - name: Configure git identity
+        run: |
+          git config user.name "ghostpyy-sync[bot]"
+          git config user.email "ghostpyy-sync@users.noreply.github.com"
+
+      - name: Add upstream remote
+        run: git remote add upstream https://github.com/pingdotgg/t3code.git
+
+      - name: Fetch upstream
+        run: git fetch upstream main
+
+      - id: status
+        name: Determine sync state
+        shell: bash
+        run: |
+          base=$(git merge-base HEAD upstream/main)
+          upstream=$(git rev-parse upstream/main)
+          if [[ "$base" == "$upstream" ]]; then
+            echo "result=up-to-date" >> "$GITHUB_OUTPUT"
+          else
+            echo "result=needs-rebase" >> "$GITHUB_OUTPUT"
+            echo "behind=$(git rev-list --count "$base..$upstream")" >> "$GITHUB_OUTPUT"
+          fi
+
+      - id: rebase
+        name: Rebase onto upstream/main
+        if: steps.status.outputs.result == 'needs-rebase'
+        shell: bash
+        run: |
+          if git rebase upstream/main; then
+            echo "result=clean" >> "$GITHUB_OUTPUT"
+            echo "head=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          else
+            echo "result=conflict" >> "$GITHUB_OUTPUT"
+            git rebase --abort
+          fi
+
+      - name: Push rebased main
+        if: steps.rebase.outputs.result == 'clean'
+        run: git push --force-with-lease origin main
+
+      - name: Trigger release build
+        if: steps.rebase.outputs.result == 'clean'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow run release.yml --ref main
+
+      - name: Open conflict issue
+        if: steps.rebase.outputs.result == 'conflict'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          UPSTREAM_BEHIND: ${{ steps.status.outputs.behind }}
+        run: |
+          existing=$(gh issue list --state open --search '"[upstream-sync] rebase conflict" in:title' --json number --jq '.[0].number // empty')
+          if [[ -n "$existing" ]]; then
+            echo "Conflict issue #$existing already open. Skipping."
+            exit 0
+          fi
+          today=$(date -u +%Y-%m-%d)
+          gh issue create \
+            --title "[upstream-sync] rebase conflict ($today)" \
+            --body "Automatic rebase onto \`pingdotgg/t3code@main\` failed. Upstream is **${UPSTREAM_BEHIND}** commit(s) ahead of our merge base.
+
+          Resolve locally:
+
+          \`\`\`bash
+          bash scripts/sync-upstream.sh
+          # resolve conflicts in your editor, then:
+          git rebase --continue
+          git push --force-with-lease origin main
+          \`\`\`
+
+          Close this issue once \`main\` is rebased."
+
+      - name: Summary
+        if: always()
+        shell: bash
+        run: |
+          echo "## Upstream sync result" >> "$GITHUB_STEP_SUMMARY"
+          echo "- status: ${{ steps.status.outputs.result }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- rebase: ${{ steps.rebase.outputs.result || 'skipped' }}" >> "$GITHUB_STEP_SUMMARY"
+          if [[ "${{ steps.rebase.outputs.result }}" == 'clean' ]]; then
+            echo "- new HEAD: ${{ steps.rebase.outputs.head }}" >> "$GITHUB_STEP_SUMMARY"
+          fi
