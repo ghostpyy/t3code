@@ -101,7 +101,19 @@ class FakeCodexRuntime implements CodexSessionRuntimeShape {
     return Effect.promise(() => this.startImpl());
   }
 
-  getSession = Effect.promise(() => this.startImpl());
+  getSession = Effect.sync(
+    () =>
+      ({
+        provider: "codex" as const,
+        status: "ready" as const,
+        runtimeMode: this.options.runtimeMode,
+        threadId: this.options.threadId,
+        cwd: this.options.cwd,
+        ...(this.options.model ? { model: this.options.model } : {}),
+        createdAt: this.now,
+        updatedAt: this.now,
+      }) satisfies ProviderSession,
+  );
 
   sendTurn(input: CodexSessionRuntimeSendTurnInput) {
     return Effect.promise(() => this.sendTurnImpl(input));
