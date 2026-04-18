@@ -1,6 +1,5 @@
 {
   "lockfileVersion": 1,
-  "configVersion": 1,
   "workspaces": {
     "": {
       "name": "@t3tools/monorepo",
@@ -89,6 +88,7 @@
         "@t3tools/client-runtime": "workspace:*",
         "@t3tools/contracts": "workspace:*",
         "@t3tools/shared": "workspace:*",
+        "@t3tools/sim-pane": "workspace:*",
         "@tanstack/react-pacer": "^0.19.4",
         "@tanstack/react-query": "^5.90.0",
         "@tanstack/react-router": "^1.160.2",
@@ -179,6 +179,20 @@
         "@types/node": "catalog:",
         "typescript": "catalog:",
         "vitest": "catalog:",
+      },
+    },
+    "packages/sim-pane": {
+      "name": "@t3tools/sim-pane",
+      "version": "0.0.0-alpha.1",
+      "devDependencies": {
+        "@types/react": "^19.0.0",
+        "@types/react-dom": "^19.0.0",
+        "typescript": "catalog:",
+        "vitest": "catalog:",
+      },
+      "peerDependencies": {
+        "react": "^19.0.0",
+        "react-dom": "^19.0.0",
       },
     },
     "scripts": {
@@ -722,6 +736,8 @@
     "@t3tools/scripts": ["@t3tools/scripts@workspace:scripts"],
 
     "@t3tools/shared": ["@t3tools/shared@workspace:packages/shared"],
+
+    "@t3tools/sim-pane": ["@t3tools/sim-pane@workspace:packages/sim-pane"],
 
     "@t3tools/web": ["@t3tools/web@workspace:apps/web"],
 

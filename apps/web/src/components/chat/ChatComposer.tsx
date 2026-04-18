@@ -1093,6 +1093,36 @@ export const ChatComposer = memo(
     }, [draftId, activeThreadId, promptRef]);
 
     // ------------------------------------------------------------------
+    // SimPane: inject @here file:line when a source reference is clicked
+    // ------------------------------------------------------------------
+    useEffect(() => {
+      function handleSimPaneRef(event: Event): void {
+        const detail = (
+          event as CustomEvent<{
+            ref?: { file: string; line: number; name?: string };
+            label?: string;
+          }>
+        ).detail;
+        if (!detail?.ref) return;
+        const label = detail.label ?? `${detail.ref.file}:${detail.ref.line}`;
+        const snapshot = composerEditorRef.current?.readSnapshot();
+        const current = snapshot?.value ?? promptRef.current;
+        const cursor = snapshot?.expandedCursor ?? current.length;
+        const insert = `@here ${label} `;
+        const nextPrompt = current.slice(0, cursor) + insert + current.slice(cursor);
+        setPrompt(nextPrompt);
+        promptRef.current = nextPrompt;
+        const nextCollapsed = collapseExpandedComposerCursor(nextPrompt, cursor + insert.length);
+        setComposerCursor(nextCollapsed);
+        window.requestAnimationFrame(() => {
+          composerEditorRef.current?.focusAt(nextCollapsed);
+        });
+      }
+      window.addEventListener("simpane:source-reference", handleSimPaneRef);
+      return () => window.removeEventListener("simpane:source-reference", handleSimPaneRef);
+    }, [setPrompt, promptRef]);
+
+    // ------------------------------------------------------------------
     // Footer compact layout observation
     // ------------------------------------------------------------------
     useLayoutEffect(() => {

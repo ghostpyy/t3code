@@ -27,6 +27,7 @@
     "@t3tools/client-runtime": "workspace:*",
     "@t3tools/contracts": "workspace:*",
     "@t3tools/shared": "workspace:*",
+    "@t3tools/sim-pane": "workspace:*",
     "@tanstack/react-pacer": "^0.19.4",
     "@tanstack/react-query": "^5.90.0",
     "@tanstack/react-router": "^1.160.2",
