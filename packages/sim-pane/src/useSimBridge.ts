@@ -1,222 +1,392 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import {
-  SIM_BRIDGE_DEFAULT_PORT,
-  type AXNode,
-  type BridgeToPane,
-  type PaneToBridge,
-  type SimInfo,
-  type SourceRef,
+import type {
+  AXElement,
+  AXHitMode,
+  AXNode,
+  BridgeToPane,
+  DeviceInfo,
+  DeviceState,
+  HardwareButtonKind,
+  PaneToBridge,
+  SimAppInfo,
 } from "./protocol.ts";
+import { computePinRanks } from "./lib/computePinRanks.ts";
+import { normalizeAxChain, normalizeAxElement } from "./lib/normalizeAx.ts";
 
-export type ConnectionState = "idle" | "connecting" | "open" | "closed" | "error";
+export interface SimSnapshot {
+  nodes: AXNode[];
+  appContext: SimAppInfo | null;
+  receivedAt: number;
+}
 
-export type SimBridgeState = {
-  readonly state: ConnectionState;
-  readonly lastError: string | null;
-  readonly info: SimInfo | null;
-  readonly frameImageUrl: string | null;
-  readonly frameSize: { w: number; h: number } | null;
-  readonly axNodes: ReadonlyArray<AXNode>;
-  readonly lastClicked: SourceRef | null;
+export type SimBridgeStatus = "connecting" | "ready" | "error" | "disconnected";
+
+export interface SimBridgeState {
+  status: SimBridgeStatus;
+  devices: DeviceInfo[];
+  selectedUdid: string | null;
+  selectedState: DeviceState;
+  bootStatus: string | null;
+  displayPixel: { width: number; height: number } | null;
+  displayScale: number | null;
+  error: { code: string; message: string } | null;
+  hoveredHit: { chain: AXElement[]; hitIndex: number } | null;
+  /** `pinRanks[i]` identifies which instance of `chain[i].identifier` the
+   *  user actually pinned, when the identifier maps to multiple on-screen
+   *  instances (e.g., a ForEach of book covers). Scroll-invariant — see
+   *  `computePinRanks`. `null` entries fall back to centroid-nearest in
+   *  `refreshPinFrames`. Captured at click time from the freshest available
+   *  snapshot; late-arriving snapshots resolve nulls if the click-time
+   *  frames are still present in the snapshot bucket. */
+  selectedHit: {
+    chain: AXElement[];
+    hitIndex: number;
+    pinRanks: (number | null)[];
+  } | null;
+  /** Monotonic counter bumped only on a fresh `axHitResponse` with `mode != "hover"`
+   *  (i.e., a genuine click from the user). Consumers use this for event-driven
+   *  side effects (like auto-injecting a @here mention) instead of watching
+   *  derived state — state-driven effects re-fire on toggle/mount with the
+   *  previous pin and mistakenly treat it as a new click. */
+  selectEventSeq: number;
+  lastTree: AXElement | null;
+  lastSnapshot: SimSnapshot | null;
+}
+
+const INITIAL_STATE: SimBridgeState = {
+  status: "connecting",
+  devices: [],
+  selectedUdid: null,
+  selectedState: "unknown",
+  bootStatus: null,
+  displayPixel: null,
+  displayScale: null,
+  error: null,
+  hoveredHit: null,
+  selectedHit: null,
+  selectEventSeq: 0,
+  lastTree: null,
+  lastSnapshot: null,
 };
 
-export type SimBridgeApi = SimBridgeState & {
-  readonly send: (msg: PaneToBridge) => void;
-  readonly inspectAt: (x: number, y: number) => Promise<SourceRef | null>;
-  readonly tap: (x: number, y: number) => void;
-};
+interface SimulatorBridge {
+  sendMessage: (msg: unknown) => Promise<void>;
+  onMessage: (listener: (payload: unknown) => void) => () => void;
+  screenshotToClipboard?: (udid: string) => Promise<boolean>;
+}
 
-export type UseSimBridgeOptions = {
-  readonly url?: string;
-  readonly autoSubscribeFps?: number;
-  readonly autoSubscribeAxIntervalMs?: number;
-};
+function resolveSimulatorBridge(): SimulatorBridge | null {
+  if (typeof window === "undefined") return null;
+  const w = window as unknown as { desktopBridge?: { simulator?: SimulatorBridge } };
+  return w.desktopBridge?.simulator ?? null;
+}
 
-export function useSimBridge(options: UseSimBridgeOptions = {}): SimBridgeApi {
-  const url = options.url ?? `ws://127.0.0.1:${SIM_BRIDGE_DEFAULT_PORT}`;
-  const fps = options.autoSubscribeFps ?? 30;
-  const axMs = options.autoSubscribeAxIntervalMs ?? 500;
+function reduce(state: SimBridgeState, msg: BridgeToPane): SimBridgeState {
+  switch (msg.type) {
+    case "deviceListResponse": {
+      const explicit = state.selectedUdid
+        ? (msg.devices.find((device) => device.udid === state.selectedUdid) ?? null)
+        : null;
+      const autoPick = explicit
+        ? null
+        : (msg.devices.find((device) => device.state === "booted") ?? msg.devices[0] ?? null);
+      const selected = explicit ?? autoPick;
+      const selectedUdid = selected?.udid ?? state.selectedUdid;
+      const selectedState = selected?.state ?? state.selectedState;
+      const bootStatus =
+        selected == null
+          ? state.bootStatus
+          : selectedState === "booted"
+            ? "Booted"
+            : selectedState === "shutdown" ||
+                selectedState === "shuttingDown" ||
+                selectedState === "unknown"
+              ? null
+              : state.bootStatus;
+      return {
+        ...state,
+        devices: msg.devices,
+        selectedUdid,
+        selectedState,
+        bootStatus,
+        error: selectedState === "booted" ? null : state.error,
+      };
+    }
+    case "deviceState": {
+      const deviceChanged = state.selectedUdid !== null && state.selectedUdid !== msg.udid;
+      const leavingBooted = state.selectedState === "booted" && msg.state !== "booted";
+      // Any device swap or boot/shutdown transition invalidates pinned
+      // selection coordinates — the on-screen content is about to change
+      // under the captured frames and a stale outline would render in
+      // empty space.
+      const resetHits = deviceChanged || leavingBooted;
+      return {
+        ...state,
+        selectedUdid: msg.udid,
+        selectedState: msg.state,
+        bootStatus: msg.bootStatus,
+        error: msg.state === "booted" ? null : state.error,
+        ...(resetHits ? { hoveredHit: null, selectedHit: null } : {}),
+      };
+    }
+    case "displayReady":
+      return {
+        ...state,
+        displayPixel: { width: msg.pixelWidth, height: msg.pixelHeight },
+        displayScale: msg.scale,
+        // Brand-new surface (boot, runtime reattach) invalidates any pin.
+        hoveredHit: null,
+        selectedHit: null,
+      };
+    case "displaySurfaceChanged":
+      return {
+        ...state,
+        displayPixel: { width: msg.pixelWidth, height: msg.pixelHeight },
+        // Rotation / size-class changes shuffle layout under pinned frames.
+        hoveredHit: null,
+        selectedHit: null,
+      };
+    case "axHitResponse": {
+      const chain = normalizeAxChain(msg.chain);
+      if (msg.mode === "hover") {
+        return { ...state, hoveredHit: { chain, hitIndex: msg.hitIndex } };
+      }
+      const pinRanks = computePinRanks(chain, state.lastSnapshot?.nodes);
+      return {
+        ...state,
+        hoveredHit: { chain, hitIndex: msg.hitIndex },
+        selectedHit: { chain, hitIndex: msg.hitIndex, pinRanks },
+        // Bump on every genuine click — even one into empty space. Consumers
+        // treat this as "user expressed select intent at this point in time"
+        // and may choose to act on the new pin (non-empty chain) or no-op
+        // (empty chain).
+        selectEventSeq: state.selectEventSeq + 1,
+      };
+    }
+    case "axTreeResponse":
+      return { ...state, lastTree: normalizeAxElement(msg.root) };
+    case "axSnapshotResponse": {
+      const lastSnapshot = {
+        nodes: msg.nodes,
+        appContext: msg.appContext,
+        receivedAt: Date.now(),
+      };
+      // Late-snapshot rank resolution: if the click raced ahead of the first
+      // snapshot poll, selectedHit.pinRanks is all-null. The NEXT snapshot
+      // to arrive usually still contains the click-time frames (Satira's
+      // registry updates in sync with layout passes, 250ms poll cadence is
+      // faster than most human scroll gestures). Recompute ranks and latch
+      // any non-null entries; leave existing non-null ranks alone so a
+      // later stale snapshot can't regress a known-good rank.
+      if (state.selectedHit && state.selectedHit.pinRanks.some((r) => r === null)) {
+        const candidateRanks = computePinRanks(state.selectedHit.chain, msg.nodes);
+        const merged = state.selectedHit.pinRanks.map((existing, i) =>
+          existing === null ? (candidateRanks[i] ?? null) : existing,
+        );
+        if (merged.some((v, i) => v !== state.selectedHit!.pinRanks[i])) {
+          return {
+            ...state,
+            lastSnapshot,
+            selectedHit: { ...state.selectedHit, pinRanks: merged },
+          };
+        }
+      }
+      return { ...state, lastSnapshot };
+    }
+    case "error":
+      return { ...state, error: { code: msg.code, message: msg.message } };
+    default:
+      return state;
+  }
+}
 
-  const wsRef = useRef<WebSocket | null>(null);
-  const inspectPromisesRef = useRef<Map<string, (ref: SourceRef | null) => void>>(new Map());
-  const lastFrameUrlRef = useRef<string | null>(null);
-  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+// Exported for tests. Consumers should not call this directly.
+export { reduce as __reduceForTest };
+export type { BridgeToPane, PaneToBridge };
 
-  const [state, setState] = useState<ConnectionState>("idle");
-  const [lastError, setLastError] = useState<string | null>(null);
-  const [info, setInfo] = useState<SimInfo | null>(null);
-  const [frameImageUrl, setFrameImageUrl] = useState<string | null>(null);
-  const [frameSize, setFrameSize] = useState<{ w: number; h: number } | null>(null);
-  const [axNodes, setAxNodes] = useState<ReadonlyArray<AXNode>>([]);
-  const [lastClicked, setLastClicked] = useState<SourceRef | null>(null);
+function coerceToMessage(payload: unknown): BridgeToPane | null {
+  if (payload && typeof payload === "object" && "type" in payload) {
+    return payload as BridgeToPane;
+  }
+  if (typeof payload === "string") {
+    try {
+      return JSON.parse(payload) as BridgeToPane;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+export interface UseSimBridgeApi {
+  state: SimBridgeState;
+  send: (msg: PaneToBridge) => void;
+  refreshDevices: () => void;
+  bootDevice: (udid: string) => void;
+  shutdownDevice: (udid: string) => void;
+  selectUdid: (udid: string) => void;
+  hitTest: (x: number, y: number, mode?: AXHitMode) => void;
+  requestTree: () => void;
+  requestSnapshot: () => void;
+  pressButton: (kind: HardwareButtonKind, down: boolean) => void;
+  tapButton: (kind: HardwareButtonKind) => void;
+  rotate: (orientation: number) => void;
+  /** Capture a PNG screenshot of the booted simulator and copy it to the
+   *  macOS clipboard. Resolves to `true` on success. No-op when the host
+   *  doesn't expose the capability or no device is selected. */
+  screenshotToClipboard: () => Promise<boolean>;
+  enableAx: () => void;
+  /** Drop both hoveredHit and selectedHit without bumping `selectEventSeq`.
+   *  Used when inspect mode toggles off or the user explicitly deselects.
+   *  Does NOT trigger auto-inject because seq is unchanged. */
+  clearSelection: () => void;
+}
+
+export function useSimBridge(): UseSimBridgeApi {
+  const [state, setState] = useState<SimBridgeState>(INITIAL_STATE);
+  const bridgeRef = useRef<SimulatorBridge | null>(null);
+  // Tracks which udid we've already issued a `deviceBoot` for in this
+  // session, so the auto-wire effect doesn't spam the daemon on every
+  // `deviceListResponse`. Cleared when the pane unmounts.
+  const wiredUdidRef = useRef<string | null>(null);
 
   const send = useCallback((msg: PaneToBridge): void => {
-    const ws = wsRef.current;
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
-    ws.send(JSON.stringify(msg));
+    const bridge = bridgeRef.current;
+    if (!bridge) return;
+    void bridge.sendMessage(msg);
   }, []);
 
-  const inspectAt = useCallback(
-    (x: number, y: number): Promise<SourceRef | null> => {
-      const requestId = crypto.randomUUID();
-      return new Promise((resolve) => {
-        inspectPromisesRef.current.set(requestId, resolve);
-        send({ type: "inspect-at", x, y, requestId });
-        setTimeout(() => {
-          if (inspectPromisesRef.current.delete(requestId)) resolve(null);
-        }, 1500);
-      });
-    },
-    [send],
-  );
-
-  const tap = useCallback(
-    (x: number, y: number): void => {
-      send({ type: "tap", x, y });
-    },
-    [send],
-  );
-
   useEffect(() => {
-    let cancelled = false;
-    let activeWs: WebSocket | null = null;
+    const bridge = resolveSimulatorBridge();
+    bridgeRef.current = bridge;
+    if (!bridge) {
+      setState((s) => ({ ...s, status: "error" }));
+      return;
+    }
 
-    const handleOpen = (): void => {
-      if (cancelled || !activeWs) return;
-      setState("open");
-      activeWs.send(JSON.stringify({ type: "subscribe-frames", fps } satisfies PaneToBridge));
-      activeWs.send(
-        JSON.stringify({ type: "subscribe-ax", intervalMs: axMs } satisfies PaneToBridge),
-      );
+    const unsubscribe = bridge.onMessage((payload) => {
+      const msg = coerceToMessage(payload);
+      if (!msg) return;
+      setState((s) => reduce(s, msg));
+    });
+
+    setState((s) => ({ ...s, status: "ready" }));
+    void bridge.sendMessage({ type: "deviceList" } satisfies PaneToBridge);
+
+    return () => {
+      unsubscribe();
+      bridgeRef.current = null;
+      wiredUdidRef.current = null;
     };
+  }, []);
 
-    const handleMessage = (ev: MessageEvent): void => {
-      if (typeof ev.data !== "string") return;
-      let msg: BridgeToPane;
-      try {
-        msg = JSON.parse(ev.data) as BridgeToPane;
-      } catch {
-        return;
-      }
-      switch (msg.type) {
-        case "frame": {
-          const blob = base64ToBlob(msg.image, msg.mime || "image/jpeg");
-          const objectUrl = URL.createObjectURL(blob);
-          const prev = lastFrameUrlRef.current;
-          lastFrameUrlRef.current = objectUrl;
-          setFrameImageUrl(objectUrl);
-          setFrameSize({ w: msg.w, h: msg.h });
-          if (prev) URL.revokeObjectURL(prev);
-          return;
-        }
-        case "ax-snapshot":
-          setAxNodes(msg.nodes);
-          return;
-        case "source-clicked":
-          setLastClicked(msg.ref);
-          return;
-        case "sim-info":
-          setInfo(msg.info);
-          return;
-        case "error":
-          setLastError(msg.message);
-          return;
-        case "inspect-result": {
-          const resolve = inspectPromisesRef.current.get(msg.requestId);
-          if (resolve) {
-            inspectPromisesRef.current.delete(msg.requestId);
-            resolve(msg.ref);
-          }
-          return;
-        }
-      }
-    };
+  // Auto-wire the display when we land on a device that simctl says is
+  // already booted but the daemon hasn't published a display surface for.
+  // This happens when sim-bridge is (re)spawned while the iOS runtime is
+  // still live — e.g. after `desktop:reinstall-current` kills the daemon
+  // without shutting down simctl. Without this the pane stays black and
+  // "Stop" is a no-op (the daemon's `currentDevice` is nil, so it has no
+  // session to tear down). Sending `deviceBoot` is idempotent: the daemon's
+  // `startDevice` adopts the already-booted runtime and wires the display.
+  useEffect(() => {
+    if (state.status !== "ready") return;
+    const { selectedUdid, selectedState, displayPixel } = state;
+    if (!selectedUdid || selectedState !== "booted" || displayPixel !== null) return;
+    if (wiredUdidRef.current === selectedUdid) return;
+    wiredUdidRef.current = selectedUdid;
+    send({ type: "deviceBoot", udid: selectedUdid });
+  }, [state, send]);
 
-    const handleError = (): void => {
-      if (cancelled) return;
-      setLastError("WebSocket error");
-      setState("error");
-    };
+  const refreshDevices = useCallback(() => send({ type: "deviceList" }), [send]);
 
-    const handleClose = (): void => {
-      if (cancelled) return;
-      setState("closed");
-      scheduleReconnect();
-    };
+  const bootDevice = useCallback(
+    (udid: string) => {
+      setState((s) => ({
+        ...s,
+        selectedUdid: udid,
+        selectedState: "booting",
+        bootStatus: "Starting",
+      }));
+      send({ type: "deviceBoot", udid });
+    },
+    [send],
+  );
 
-    const detach = (ws: WebSocket): void => {
-      ws.removeEventListener("open", handleOpen);
-      ws.removeEventListener("message", handleMessage);
-      ws.removeEventListener("error", handleError);
-      ws.removeEventListener("close", handleClose);
-    };
+  const shutdownDevice = useCallback(
+    (udid: string) => send({ type: "deviceShutdown", udid }),
+    [send],
+  );
 
-    const connect = (): void => {
-      if (cancelled) return;
-      setState("connecting");
-      setLastError(null);
+  const selectUdid = useCallback((udid: string) => {
+    setState((s) => (s.selectedUdid === udid ? s : { ...s, selectedUdid: udid }));
+  }, []);
 
-      let ws: WebSocket;
-      try {
-        ws = new WebSocket(url);
-      } catch (err) {
-        setLastError(err instanceof Error ? err.message : "Failed to construct WebSocket");
-        setState("error");
-        scheduleReconnect();
-        return;
-      }
-      activeWs = ws;
-      wsRef.current = ws;
-      ws.binaryType = "arraybuffer";
+  const hitTest = useCallback(
+    (x: number, y: number, mode: AXHitMode = "select") => send({ type: "axHit", x, y, mode }),
+    [send],
+  );
 
-      ws.addEventListener("open", handleOpen);
-      ws.addEventListener("message", handleMessage);
-      ws.addEventListener("error", handleError);
-      ws.addEventListener("close", handleClose);
-    };
+  const requestTree = useCallback(() => send({ type: "axTree" }), [send]);
 
-    const scheduleReconnect = (): void => {
-      if (cancelled) return;
-      if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
-      reconnectTimerRef.current = setTimeout(connect, 1500);
-    };
+  const requestSnapshot = useCallback(() => send({ type: "axSnapshot" }), [send]);
 
-    connect();
+  const pressButton = useCallback(
+    (kind: HardwareButtonKind, down: boolean) => send({ type: "inputButton", kind, down }),
+    [send],
+  );
 
-    return (): void => {
-      cancelled = true;
-      if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
-      const ws = wsRef.current;
-      wsRef.current = null;
-      if (ws) {
-        detach(ws);
-        ws.close();
-      }
-      activeWs = null;
-      const lastUrl = lastFrameUrlRef.current;
-      lastFrameUrlRef.current = null;
-      if (lastUrl) URL.revokeObjectURL(lastUrl);
-    };
-  }, [url, fps, axMs]);
+  const tapButton = useCallback(
+    (kind: HardwareButtonKind) => {
+      send({ type: "inputButton", kind, down: true });
+      setTimeout(() => send({ type: "inputButton", kind, down: false }), 40);
+    },
+    [send],
+  );
+
+  const rotate = useCallback(
+    (orientation: number) => send({ type: "rotate", orientation }),
+    [send],
+  );
+
+  const screenshotToClipboard = useCallback(async (): Promise<boolean> => {
+    const bridge = bridgeRef.current;
+    if (!bridge?.screenshotToClipboard) return false;
+    const udid = state.selectedUdid;
+    if (!udid) return false;
+    try {
+      return await bridge.screenshotToClipboard(udid);
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.warn("[sim-bridge] screenshotToClipboard failed", error);
+      return false;
+    }
+  }, [state.selectedUdid]);
+
+  const enableAx = useCallback(() => send({ type: "axEnable" }), [send]);
+
+  const clearSelection = useCallback(() => {
+    setState((s) =>
+      s.hoveredHit === null && s.selectedHit === null
+        ? s
+        : { ...s, hoveredHit: null, selectedHit: null },
+    );
+  }, []);
 
   return {
     state,
-    lastError,
-    info,
-    frameImageUrl,
-    frameSize,
-    axNodes,
-    lastClicked,
     send,
-    inspectAt,
-    tap,
+    refreshDevices,
+    bootDevice,
+    shutdownDevice,
+    selectUdid,
+    hitTest,
+    requestTree,
+    requestSnapshot,
+    pressButton,
+    tapButton,
+    rotate,
+    screenshotToClipboard,
+    enableAx,
+    clearSelection,
   };
-}
-
-function base64ToBlob(b64: string, mime: string): Blob {
-  const bin = atob(b64);
-  const len = bin.length;
-  const buf = new Uint8Array(len);
-  for (let i = 0; i < len; i++) buf[i] = bin.charCodeAt(i);
-  return new Blob([buf], { type: mime });
 }

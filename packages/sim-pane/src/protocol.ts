@@ -1,117 +1,129 @@
 export const SIM_BRIDGE_DEFAULT_PORT = 17323;
 
-export type SourceRef = {
-  readonly file: string;
-  readonly line: number;
-  readonly function?: string;
-  readonly kind?: string;
-  readonly name?: string;
-  readonly role?: string;
-  readonly title?: string;
-  readonly value?: string;
-  readonly help?: string;
-  readonly identifier?: string;
-};
+export type DeviceState =
+  | "shutdown"
+  | "booting"
+  | "booted"
+  | "shuttingDown"
+  | "creating"
+  | "unknown";
 
-export type Frame = {
-  readonly x: number;
-  readonly y: number;
-  readonly w: number;
-  readonly h: number;
-};
+export interface DeviceInfo {
+  udid: string;
+  name: string;
+  runtime: string;
+  model: string;
+  state: DeviceState;
+}
 
-export type AXNode = SourceRef & {
-  readonly frame: Frame;
-};
+export interface AXFrame {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  /** Corner radius of the backing iOS view (display points). Forwarded to
+   *  the native picker so the outline shape matches the element — rounded
+   *  for squircle buttons and material cards, zero for plain rectangles. */
+  cornerRadius?: number;
+}
 
-export type SimInfo = {
-  readonly udid: string;
-  readonly name: string;
-  readonly model: string;
-  readonly status: "booted" | "shutdown" | "unknown";
-  readonly screenW: number;
-  readonly screenH: number;
-};
+export interface SimAppInfo {
+  bundleId: string;
+  name: string | null;
+  pid: number;
+  bundlePath: string | null;
+  dataContainer: string | null;
+  executablePath: string | null;
+  projectPath: string | null;
+}
 
-export type BridgeToPane =
-  | {
-      readonly type: "frame";
-      readonly image: string;
-      readonly mime: string;
-      readonly w: number;
-      readonly h: number;
-      readonly ts: number;
-    }
-  | { readonly type: "ax-snapshot"; readonly nodes: ReadonlyArray<AXNode>; readonly ts: number }
-  | {
-      readonly type: "source-clicked";
-      readonly ref: SourceRef;
-      readonly frame: Frame;
-      readonly ts: number;
-    }
-  | { readonly type: "sim-info"; readonly info: SimInfo }
-  | { readonly type: "error"; readonly message: string }
-  | {
-      readonly type: "inspect-result";
-      readonly requestId: string;
-      readonly ref: SourceRef | null;
-    };
+export interface AXSourceHint {
+  absolutePath: string;
+  line: number;
+  reason: string;
+  confidence: number;
+  /** Raw source neighborhood (newline-joined) centered on `line`. Only set
+   *  when the bridge could read the file; unresolved hints stay terse. */
+  snippet?: string | null;
+  /** 1-indexed file line matching the first row of `snippet`. */
+  snippetStartLine?: number | null;
+}
+
+export interface AXElement {
+  id: string;
+  role: string;
+  label: string | null;
+  value: string | null;
+  frame: AXFrame;
+  identifier: string | null;
+  enabled: boolean;
+  selected: boolean;
+  children: AXElement[] | null;
+  appContext: SimAppInfo | null;
+  sourceHints: AXSourceHint[] | null;
+}
+
+/** Flat BFS node for the full-snapshot feed. Mirrors `AXNode` in the bridge
+ *  — the pane rebuilds topology via `parentId` instead of shipping nested
+ *  trees, which keeps the outline overlay + gap math cheap. */
+export interface AXNode {
+  id: string;
+  parentId: string | null;
+  role: string;
+  label: string | null;
+  value: string | null;
+  identifier: string | null;
+  frame: AXFrame;
+  enabled: boolean;
+  selected: boolean;
+}
+
+/** Parsed from `.inspectable()`'s `accessibilityIdentifier` stamp.
+ *  Format: `ModuleName/File.swift:42` or `ModuleName/File.swift:42|name=Alias`. */
+export interface InspectableAnchor {
+  module: string | null;
+  file: string;
+  line: number;
+  alias: string | null;
+  sourcePath: string;
+  absolutePath: string | null;
+}
+
+export type AXHitMode = "hover" | "select";
+
+export type HardwareButtonKind = "home" | "lock" | "siri" | "side" | "applePay" | "keyboard";
 
 export type PaneToBridge =
-  | { readonly type: "tap"; readonly x: number; readonly y: number }
+  | { type: "deviceList" }
+  | { type: "deviceBoot"; udid: string }
+  | { type: "deviceShutdown"; udid: string }
+  | { type: "inputTap"; x: number; y: number; phase: "down" | "up" }
+  | { type: "inputDrag"; points: { x: number; y: number; t: number }[] }
+  | { type: "inputKey"; usage: number; down: boolean; modifiers: number }
+  | { type: "inputButton"; kind: HardwareButtonKind; down: boolean }
+  | { type: "axEnable" }
+  | { type: "axHit"; x: number; y: number; mode: AXHitMode }
+  | { type: "axTree" }
+  | { type: "axSnapshot" }
+  | { type: "axAction"; elementId: string; action: string }
+  | { type: "rotate"; orientation: number };
+
+export type BridgeToPane =
+  | { type: "deviceListResponse"; devices: DeviceInfo[] }
+  | { type: "deviceState"; udid: string; state: DeviceState; bootStatus: string | null }
   | {
-      readonly type: "drag";
-      readonly fromX: number;
-      readonly fromY: number;
-      readonly toX: number;
-      readonly toY: number;
-      readonly durationMs: number;
+      type: "displayReady";
+      contextId: number;
+      pixelWidth: number;
+      pixelHeight: number;
+      scale: number;
     }
-  | { readonly type: "type-text"; readonly text: string }
-  | { readonly type: "press-key"; readonly key: string }
+  | { type: "displaySurfaceChanged"; pixelWidth: number; pixelHeight: number }
+  | { type: "axHitResponse"; chain: AXElement[]; hitIndex: number; mode: AXHitMode }
+  | { type: "axTreeResponse"; root: AXElement }
   | {
-      readonly type: "inspect-at";
-      readonly x: number;
-      readonly y: number;
-      readonly requestId: string;
+      type: "axSnapshotResponse";
+      nodes: AXNode[];
+      appContext: SimAppInfo | null;
     }
-  | { readonly type: "subscribe-frames"; readonly fps: number }
-  | { readonly type: "subscribe-ax"; readonly intervalMs: number };
-
-export const SOURCE_REFERENCE_EVENT = "simpane:source-reference";
-export const OPEN_SOURCE_EVENT = "simpane:open-source";
-
-export type SourceReferenceEventDetail = {
-  readonly ref: SourceRef;
-  readonly label: string;
-};
-
-export type OpenSourceEventDetail = {
-  readonly ref: SourceRef;
-  readonly url: string;
-};
-
-export function sourceRefLabel(ref: SourceRef): string {
-  if (ref.file && ref.line > 0) {
-    const where = `${ref.file}:${ref.line}`;
-    if (ref.name && ref.name.length > 0) return `${ref.kind ?? "view"} ${ref.name} (${where})`;
-    if (ref.kind && ref.kind.length > 0) return `${ref.kind} (${where})`;
-    return where;
-  }
-  const role = (ref.role ?? "AXElement").replace(/^AX/, "");
-  const label = ref.title ?? ref.value ?? ref.identifier ?? "";
-  return label ? `${role} \u201C${label}\u201D` : role;
-}
-
-export function sourceRefHasLocation(ref: SourceRef): boolean {
-  return Boolean(ref.file) && ref.line > 0;
-}
-
-export function isAbsolutePath(file: string): boolean {
-  return file.startsWith("/") || /^[a-zA-Z]:\\/.test(file);
-}
-
-export function openSourceUrl(ref: SourceRef, scheme: string = "cursor"): string | null {
-  if (!isAbsolutePath(ref.file)) return null;
-  return `${scheme}://file/${ref.file}:${ref.line}`;
-}
+  | { type: "error"; code: string; message: string; detail?: Record<string, string> };

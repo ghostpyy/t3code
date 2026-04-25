@@ -1,28 +1,26 @@
 export { SimPane } from "./SimPane.tsx";
-export type { SimPaneProps, SimPaneMode } from "./SimPane.tsx";
+export type { SimPaneProps, SimPaneMode, SimPaneBounds, SimPaneOutlineRect } from "./SimPane.tsx";
 export { useSimBridge } from "./useSimBridge.ts";
 export type {
-  UseSimBridgeOptions,
-  SimBridgeApi,
   SimBridgeState,
-  ConnectionState,
+  SimBridgeStatus,
+  SimSnapshot,
+  UseSimBridgeApi,
 } from "./useSimBridge.ts";
+export * from "./protocol.ts";
+export * from "./lib/deviceDescriptors.ts";
 export {
-  SIM_BRIDGE_DEFAULT_PORT,
-  SOURCE_REFERENCE_EVENT,
-  OPEN_SOURCE_EVENT,
-  sourceRefLabel,
-  sourceRefHasLocation,
-  isAbsolutePath,
-  openSourceUrl,
-} from "./protocol.ts";
-export type {
-  SourceRef,
-  SourceReferenceEventDetail,
-  OpenSourceEventDetail,
-  Frame,
-  AXNode,
-  SimInfo,
-  BridgeToPane,
-  PaneToBridge,
-} from "./protocol.ts";
+  buildSimElementMention,
+  renderMentionMarkdown,
+  SIM_INSPECT_MARKER_END,
+  SIM_INSPECT_MARKER_START,
+  type SimElementMention,
+  type AncestorRef,
+} from "./lib/mentions.ts";
+export {
+  parseInspectable,
+  anchorDisplay,
+  anchorRelativePath,
+  anchorRelativeCandidates,
+} from "./lib/parseInspectable.ts";
+export { normalizeAxElement, normalizeAxChain } from "./lib/normalizeAx.ts";
