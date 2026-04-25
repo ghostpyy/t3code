@@ -64,6 +64,7 @@
 **Stamp grammar (locked):** the modifier call is bare `.inspectable()` — satira's existing helper `extension View.inspectable(_ name: String? = nil, file: String = #fileID, line: Int = #line)` captures `#fileID:#line` at call site, producing identifiers `Satira/Views/Foo.swift:42` — matching the existing `parseInspectable` TS/Swift grammar already wired through the stack. **No new grammar to teach to the parsers.**
 
 **Modes:**
+
 - Default: rewrite in place; skip files whose output == input (no mtime churn).
 - `--check`: exit 1 if any file would change (CI gate).
 - `--verbose`: print per-file counts.
@@ -75,6 +76,7 @@
 ### 2. Satira integration — **9 lines total**
 
 `satira/scripts/stamp-ax.sh`:
+
 ```bash
 #!/usr/bin/env bash
 set -e
@@ -87,6 +89,7 @@ fi
 ```
 
 `satira/project.yml` — one entry on the `Satira` target:
+
 ```yaml
 preBuildScripts:
   - path: scripts/stamp-ax.sh
@@ -95,6 +98,7 @@ preBuildScripts:
     outputFiles: []
     basedOnDependencyAnalysis: false
 ```
+
 With `ENABLE_USER_SCRIPT_SANDBOXING: NO` scoped to this phase via `settings` override if Xcode flags violations — in practice the stamper writes only under `$SRCROOT/Sources/**` which is implicitly allowed on stock new projects; sandboxing refuses only when writes land outside declared outputs. v1 ships without sandbox disable; if CI flags it we add per-phase override.
 
 Satira adds no new swift code, no dependency to `Package.swift`, no modification to `Inspectable.swift`.
@@ -104,11 +108,13 @@ Satira adds no new swift code, no dependency to `Package.swift`, no modification
 **Replaces:** `AXSourceInference.swift` (delete — its 8-second TTL cache + weak text heuristic are obsolete once `.inspectable()` is universal).
 
 **`SourceIndex`:**
+
 - On bridge start, walk each `projectRoot` once; parse every `*.swift` into a sorted line array.
 - Subscribe via `FSEventStream` (CoreServices) to each project root. On change, rebuild just the touched file. Debounce 150 ms.
 - Keyed by canonical absolute path; exposes `line(at:file:) -> String?` and `search(token:) -> [(file, line, context)]`.
 
 **`SourceResolver`:**
+
 - `resolve(chain: [AXElement], appContext: SimAppInfo) -> ResolvedSource`
 - Pipeline:
   1. **Direct hit**: scan `chain` leaf→root for an `identifier` parsed by `parseInspectableModule` (already exists). First parseable → `confidence = 0.98`, return immediately.
@@ -117,12 +123,14 @@ Satira adds no new swift code, no dependency to `Package.swift`, no modification
 - Returns `ResolvedSource { primary: Anchor, candidates: [Anchor], signals: [String] }` — top 3 candidates always surfaced to the UI (never silently dropped).
 
 **Full snapshot producer — `AXFullSnapshot`:**
+
 - New method on Coordinator: `captureSnapshot()` — walks the frontmost app's AX tree via the existing `AXInspector`, emits a flat list of `AXNode { id, role, frame, parentId, identifier? }` for all visible elements.
 - Triggered by a new `axSnapshot` PaneToBridge message.
 
 ### 4. Protocol additions
 
 Swift `Protocol.swift` + TS `protocol.ts`:
+
 ```
 PaneToBridge:
   + axSnapshot        // "give me every visible element's frame"
@@ -132,15 +140,18 @@ BridgeToPane:
 ```
 
 `AXNode`:
+
 ```
 { id: string, role: string, label: string | null, identifier: string | null,
   frame: AXFrame, parentId: string | null, depth: number }
 ```
 
 Existing `axHitResponse.chain` already carries `sourceHints`; we extend `AXSourceHint` with:
+
 ```
 + source: "direct" | "ancestor" | "semantic"
 ```
+
 so the UI can badge candidates.
 
 ### 5. Inspector UI — `packages/sim-pane/src/components/`
@@ -148,7 +159,9 @@ so the UI can badge candidates.
 **Extraction:** the monolithic `InspectPanel` inside `SimPane.tsx` (L565-831) is lifted to its own file. Companion sub-components are extracted as peers. This clears the 1119-LOC file by ~40%.
 
 #### `InspectPanel.tsx`
+
 Clean two-pane layout:
+
 - **Header row**: role chip + frame badge. No "Anonymous element" — when `role === "AXUIElement"`, the title falls through to the nearest ancestor's `.inspectable()` alias, or to the semantic text of the first child with one. If still empty, render role in muted italic (no placeholder text).
 - **Source row**: file name + line + "Open" button. Confidence dot (green ≥0.9, amber 0.7-0.9, red <0.7). Click → dispatches `openSource(abs, line)`.
 - **Candidate list**: `CandidateList` component, collapsed by default when there's only a direct hit; expands when confidence <1.0 or there are >1 matches.
@@ -156,10 +169,13 @@ Clean two-pane layout:
 - **Chat attach**: one button `Attach to chat` + `⌘↵` shortcut. Renders via `SIM_SOURCE_MARKER_*` (see §6).
 
 #### `OutlineLayer.tsx`
+
 Always-on-when-inspect-on overlay: strokes every visible element from the `AXSnapshot`. Selected element: 2pt `tokens.color.accentLive`; hover: 1.5pt `accentSoft`; rest: 0.75pt `rgba(100,120,255,0.35)`. `React.memo` per-rect, keyed by stable AXNode id — 200 rects reconcile in < 2 ms on selection change.
 
 #### `SpacingOverlay.tsx`
+
 Figma-style redlines:
+
 - Adjacency via `rbush` (O(N log N) for sibling pairs).
 - Parent/child inset detected from `parentId` graph → 4-sided padding measures.
 - Tick-capped dimension lines (no arrow markers — crisper), label placement per overlay research §4 (inline for ≥24 pt gaps, outside for 8-24, hover-only for <8).
@@ -167,11 +183,13 @@ Figma-style redlines:
 - Toggle lives in the inspect toolbar (shortcut `⌘⇧G`).
 
 #### `CandidateList.tsx`
+
 Virtualized list of `ResolvedSource.candidates`. Each row: filename, line, signal badge (`direct` / `ancestor` / `semantic`), confidence bar, open button. Selecting a row retargets the primary anchor (and updates the chat attach payload if pinned).
 
 ### 6. Chat attach — `packages/sim-pane/src/lib/`
 
 New `buildSourceMention.ts`:
+
 - Emits a markdown block delimited by new marker pair:
   ```
   <!-- @here:sim-source:start -->
@@ -222,15 +240,15 @@ New `buildSourceMention.ts`:
 
 ## Phased implementation
 
-| Phase | Scope | Files touched | Verify |
-|---|---|---|---|
-| **P1** Scaffold | Create `tools/ax-stamp/` SwiftPM package skeleton; add satira `scripts/stamp-ax.sh` + `project.yml` preBuildScripts entry (commit to satira separately). | ~8 | `swift build` in tools/ax-stamp |
-| **P2** Stamper | Implement the SyntaxRewriter; golden tests; `--check` mode. | ~6 | `swift test` green; run against satira → 8 stamps emitted |
-| **P3** Bridge-side | New `SourceIndex`, `SourceResolver`, `AXFullSnapshot`; delete `AXSourceInference.swift`; wire into `Coordinator`. Protocol add `axSnapshot*`. | ~7 | `swift build` green; smoke-test.mjs still passes |
-| **P4** TS protocol | `protocol.ts` `AXNode`, `AXSnapshot*`; update `useSimBridge` state; `SIM_SOURCE_MARKER_*` in `mentions.ts`. | ~4 | `tsc --noEmit` in packages/sim-pane + apps/web |
-| **P5** UI components | Extract `InspectPanel`, new `OutlineLayer`, `SpacingOverlay`, `CandidateList`, `computeGaps`, `buildSourceMention`. Wire into `SimPane`. | ~9 | `tsc --noEmit` + `eslint`; visual QA in packaged app |
-| **P6** Chat attach | `buildSourceMention.ts`; `ChatComposer.tsx` handler for new marker; `simPaneEvents.ts` pass-through. | ~3 | attach in live app; verify marker block replaces on next tap |
-| **P7** End-to-end verify | Build desktop artifact; boot satira in simulator; tap known views; confirm source open, gap overlay, chat attach. Rebuild sim-bridge. | manual | screenshots + grep proofs |
+| Phase                    | Scope                                                                                                                                                    | Files touched | Verify                                                       |
+| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------- | ------------------------------------------------------------ |
+| **P1** Scaffold          | Create `tools/ax-stamp/` SwiftPM package skeleton; add satira `scripts/stamp-ax.sh` + `project.yml` preBuildScripts entry (commit to satira separately). | ~8            | `swift build` in tools/ax-stamp                              |
+| **P2** Stamper           | Implement the SyntaxRewriter; golden tests; `--check` mode.                                                                                              | ~6            | `swift test` green; run against satira → 8 stamps emitted    |
+| **P3** Bridge-side       | New `SourceIndex`, `SourceResolver`, `AXFullSnapshot`; delete `AXSourceInference.swift`; wire into `Coordinator`. Protocol add `axSnapshot*`.            | ~7            | `swift build` green; smoke-test.mjs still passes             |
+| **P4** TS protocol       | `protocol.ts` `AXNode`, `AXSnapshot*`; update `useSimBridge` state; `SIM_SOURCE_MARKER_*` in `mentions.ts`.                                              | ~4            | `tsc --noEmit` in packages/sim-pane + apps/web               |
+| **P5** UI components     | Extract `InspectPanel`, new `OutlineLayer`, `SpacingOverlay`, `CandidateList`, `computeGaps`, `buildSourceMention`. Wire into `SimPane`.                 | ~9            | `tsc --noEmit` + `eslint`; visual QA in packaged app         |
+| **P6** Chat attach       | `buildSourceMention.ts`; `ChatComposer.tsx` handler for new marker; `simPaneEvents.ts` pass-through.                                                     | ~3            | attach in live app; verify marker block replaces on next tap |
+| **P7** End-to-end verify | Build desktop artifact; boot satira in simulator; tap known views; confirm source open, gap overlay, chat attach. Rebuild sim-bridge.                    | manual        | screenshots + grep proofs                                    |
 
 Phases P3 and P4 can parallelize against each other; P5 depends on P4.
 

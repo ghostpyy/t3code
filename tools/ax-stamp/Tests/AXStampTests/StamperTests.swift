@@ -38,6 +38,38 @@ final class StamperTests: XCTestCase {
         XCTAssertEqual(out, src)
         XCTAssertEqual(stamps, 0)
     }
+
+    func testStripInspectable() throws {
+        let src = """
+        import SwiftUI
+        struct X: View {
+            var body: some View {
+                VStack {
+                    Text("a").inspectable()
+                    Text("b").inspectable("Bee")
+                }
+                .padding()
+                .inspectable()
+            }
+        }
+        """
+        let expected = """
+        import SwiftUI
+        struct X: View {
+            var body: some View {
+                VStack {
+                    Text("a")
+                    Text("b")
+                }
+                .padding()
+            }
+        }
+        """
+        let (out, removals) = Stamper.strip(source: src)
+        XCTAssertEqual(out, expected)
+        XCTAssertEqual(removals, 3)
+        XCTAssertEqual(Stamper.strip(source: out).removals, 0)
+    }
 }
 
 enum FixtureLoader {
