@@ -75,6 +75,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         verbose: Option.some(false),
         mockUpdates: Option.some(false),
         mockUpdateServerPort: Option.none(),
+        skipSimBridge: Option.some(false),
       }).pipe(
         Effect.provide(
           ConfigProvider.layer(
