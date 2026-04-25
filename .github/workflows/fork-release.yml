@@ -93,12 +93,18 @@ jobs:
           # upstream's). Without this, resolveGitHubPublishConfig returns
           # undefined → no app-update.yml → "Check for Updates..." dead.
           T3CODE_DESKTOP_UPDATE_REPOSITORY: ghostpyy/t3code
+          # The fork's sim-bridge sources are mid-rewrite and don't compile
+          # under the macos-14 runner's Swift toolchain. SimBridge.app is
+          # loaded lazily at runtime — its absence only disables simulator
+          # integration; the rest of the app starts up and updates fine.
+          T3CODE_DESKTOP_SKIP_SIM_BRIDGE: "1"
         run: |
           bun run dist:desktop:artifact -- \
             --platform mac \
             --target dmg \
             --arch arm64 \
             --build-version "${{ steps.version.outputs.version }}" \
+            --skip-sim-bridge \
             --verbose
 
       - name: Collect release assets

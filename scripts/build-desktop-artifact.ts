@@ -75,6 +75,7 @@ interface BuildCliInput {
   readonly verbose: Option.Option<boolean>;
   readonly mockUpdates: Option.Option<boolean>;
   readonly mockUpdateServerPort: Option.Option<number>;
+  readonly skipSimBridge: Option.Option<boolean>;
 }
 
 function detectHostBuildPlatform(hostPlatform: string): typeof BuildPlatform.Type | undefined {
@@ -206,6 +207,7 @@ interface ResolvedBuildOptions {
   readonly verbose: boolean;
   readonly mockUpdates: boolean;
   readonly mockUpdateServerPort: number | undefined;
+  readonly skipSimBridge: boolean;
 }
 
 interface StagePackageJson {
@@ -251,6 +253,7 @@ const BuildEnvConfig = Config.all({
   verbose: Config.boolean("T3CODE_DESKTOP_VERBOSE").pipe(Config.withDefault(false)),
   mockUpdates: Config.boolean("T3CODE_DESKTOP_MOCK_UPDATES").pipe(Config.withDefault(false)),
   mockUpdateServerPort: Config.string("T3CODE_DESKTOP_MOCK_UPDATE_SERVER_PORT").pipe(Config.option),
+  skipSimBridge: Config.boolean("T3CODE_DESKTOP_SKIP_SIM_BRIDGE").pipe(Config.withDefault(false)),
 });
 
 const MockUpdateServerPortSchema = Schema.NumberFromString.check(
@@ -323,6 +326,8 @@ export const resolveBuildOptions = Effect.fn("resolveBuildOptions")(function* (
       ),
     ));
 
+  const skipSimBridge = resolveBooleanFlag(input.skipSimBridge, env.skipSimBridge);
+
   return {
     platform,
     target,
@@ -335,6 +340,7 @@ export const resolveBuildOptions = Effect.fn("resolveBuildOptions")(function* (
     verbose,
     mockUpdates,
     mockUpdateServerPort,
+    skipSimBridge,
   } satisfies ResolvedBuildOptions;
 });
 
@@ -765,7 +771,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   }
 
   const simBridgeAppPath = path.join(repoRoot, "apps/sim-bridge/.build/release/SimBridge.app");
-  if (options.platform === "mac" && !options.skipBuild) {
+  if (options.platform === "mac" && !options.skipBuild && !options.skipSimBridge) {
     yield* Effect.log("[desktop-artifact] Building sim-bridge (swift) + app bundle...");
     yield* runCommand(
       ChildProcess.make({
@@ -778,6 +784,10 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
         cwd: path.join(repoRoot, "apps/sim-bridge"),
         ...commandOutputOptions(options.verbose),
       })`bash scripts/build-app-bundle.sh`,
+    );
+  } else if (options.platform === "mac" && options.skipSimBridge) {
+    yield* Effect.logWarning(
+      "[desktop-artifact] Skipping sim-bridge build (T3CODE_DESKTOP_SKIP_SIM_BRIDGE=1). Installed app will lack simulator integration.",
     );
   }
 
@@ -1015,6 +1025,12 @@ const buildDesktopArtifactCli = Command.make("build-desktop-artifact", {
   mockUpdateServerPort: Flag.integer("mock-update-server-port").pipe(
     Flag.withSchema(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65535 }))),
     Flag.withDescription("Mock update server port (env: T3CODE_DESKTOP_MOCK_UPDATE_SERVER_PORT)."),
+    Flag.optional,
+  ),
+  skipSimBridge: Flag.boolean("skip-sim-bridge").pipe(
+    Flag.withDescription(
+      "Skip the swift build + SimBridge.app bundle step. Use when sim-bridge sources are mid-rewrite (env: T3CODE_DESKTOP_SKIP_SIM_BRIDGE).",
+    ),
     Flag.optional,
   ),
 }).pipe(
