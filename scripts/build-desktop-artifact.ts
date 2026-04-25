@@ -559,9 +559,10 @@ export function resolveMockUpdateServerUrl(mockUpdateServerPort: number | undefi
 }
 
 export function resolveDesktopProductName(version: string): string {
+  const stable = desktopPackageJson.productName ?? "T3 Code Ernn Edition";
   return resolveDesktopUpdateChannel(version) === "nightly"
-    ? "T3 Code (Nightly)"
-    : (desktopPackageJson.productName ?? "T3 Code");
+    ? `${stable} (Nightly)`
+    : stable;
 }
 
 const createBuildConfig = Effect.fn("createBuildConfig")(function* (

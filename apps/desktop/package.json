@@ -1,6 +1,6 @@
 {
   "name": "@t3tools/desktop",
-  "version": "0.0.28",
+  "version": "0.0.21",
   "private": true,
   "type": "module",
   "main": "dist-electron/main.cjs",
@@ -29,5 +29,5 @@
     "typescript": "catalog:",
     "vitest": "catalog:"
   },
-  "productName": "T3 Code (Alpha)"
+  "productName": "T3 Code Ernn Edition"
 }

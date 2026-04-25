@@ -32,16 +32,42 @@ describe("resolveDesktopAppStageLabel", () => {
 });
 
 describe("resolveDesktopAppBranding", () => {
-  it("returns a complete desktop branding payload", () => {
+  it("returns Ernn Edition branding for nightly builds", () => {
     expect(
       resolveDesktopAppBranding({
         isDevelopment: false,
         appVersion: "0.0.17-nightly.20260414.1",
       }),
     ).toEqual({
-      baseName: "T3 Code",
+      baseName: "T3 Code Ernn Edition",
       stageLabel: "Nightly",
-      displayName: "T3 Code (Nightly)",
+      displayName: "T3 Code Ernn Edition (Nightly)",
+    });
+  });
+
+  it("drops the Alpha qualifier on stable Ernn Edition builds", () => {
+    expect(
+      resolveDesktopAppBranding({
+        isDevelopment: false,
+        appVersion: "0.0.21",
+      }),
+    ).toEqual({
+      baseName: "T3 Code Ernn Edition",
+      stageLabel: "Alpha",
+      displayName: "T3 Code Ernn Edition",
+    });
+  });
+
+  it("keeps the Dev qualifier when running locally", () => {
+    expect(
+      resolveDesktopAppBranding({
+        isDevelopment: true,
+        appVersion: "0.0.21",
+      }),
+    ).toEqual({
+      baseName: "T3 Code Ernn Edition",
+      stageLabel: "Dev",
+      displayName: "T3 Code Ernn Edition (Dev)",
     });
   });
 });

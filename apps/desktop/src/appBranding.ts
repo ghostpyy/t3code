@@ -3,6 +3,7 @@ import type { DesktopAppBranding, DesktopAppStageLabel } from "@t3tools/contract
 import { isNightlyDesktopVersion } from "./updateChannels.ts";
 
 const APP_BASE_NAME = "T3 Code";
+const FORK_EDITION = "Ernn Edition";
 
 export function resolveDesktopAppStageLabel(input: {
   readonly isDevelopment: boolean;
@@ -20,9 +21,8 @@ export function resolveDesktopAppBranding(input: {
   readonly appVersion: string;
 }): DesktopAppBranding {
   const stageLabel = resolveDesktopAppStageLabel(input);
-  return {
-    baseName: APP_BASE_NAME,
-    stageLabel,
-    displayName: `${APP_BASE_NAME} (${stageLabel})`,
-  };
+  const baseName = `${APP_BASE_NAME} ${FORK_EDITION}`;
+  const displayName =
+    stageLabel === "Alpha" ? baseName : `${baseName} (${stageLabel})`;
+  return { baseName, stageLabel, displayName };
 }
