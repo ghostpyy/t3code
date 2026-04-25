@@ -1,14 +1,22 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Sync this fork with pingdotgg/t3code while keeping our additive layer (sim-pane / sim-bridge / SimPaneRail).
+# Sync this fork with pingdotgg/t3code while keeping every fork commit
+# intact (sim-bridge, sim-pane, ax-stamp, chat UI polish, …).
 #
-# Strategy:
-#   1. Stash any local work-in-progress.
-#   2. Fetch upstream and rebase main onto upstream/main.
-#   3. Reapply WIP.
-#   4. Re-run install (ignore-scripts to dodge effect-language-service patch issues).
-#   5. Typecheck + lint to confirm nothing broke.
+# Strategy: MERGE, not rebase.
+#   * Fork commits keep their original SHAs forever.
+#   * origin/main is append-only — no force-push, external refs stay valid.
+#   * Conflicts are resolved once per merge and pinned in the merge commit.
+#
+# Flow:
+#   1. Stash any work-in-progress.
+#   2. Fetch upstream.
+#   3. git merge --no-ff upstream/main (conflict => bail with instructions).
+#   4. Restore WIP.
+#   5. Reinstall deps (--ignore-scripts to dodge the effect-language-service
+#      post-install patch race).
+#   6. typecheck + lint.
 #
 # Usage: bash scripts/sync-upstream.sh [--dry-run]
 
@@ -61,12 +69,28 @@ if [[ -z "$UPSTREAM_HEAD" ]]; then
   exit 1
 fi
 
-if [[ "$LOCAL_HEAD" == "$UPSTREAM_HEAD" ]]; then
+BASE="$(git merge-base HEAD upstream/main)"
+if [[ "$BASE" == "$UPSTREAM_HEAD" ]]; then
   echo "already up to date with upstream/main"
 else
-  echo "rebasing onto upstream/main..."
+  BEHIND="$(git rev-list --count "$BASE..$UPSTREAM_HEAD")"
+  echo "merging $BEHIND commit(s) from upstream/main..."
   if (( DRY_RUN == 0 )); then
-    git rebase upstream/main
+    if ! git merge --no-ff --no-edit \
+        -m "chore: merge upstream/main ($BEHIND commit(s))" \
+        upstream/main; then
+      echo
+      echo "merge stopped on conflicts."
+      echo "resolve them, then:"
+      echo "  git add -A"
+      echo "  git commit --no-edit"
+      echo "  git push origin main"
+      if [[ -n "$WIP_STASH" ]]; then
+        echo
+        echo "your WIP is stashed; restore with: git stash pop"
+      fi
+      exit 1
+    fi
   fi
 fi
 
