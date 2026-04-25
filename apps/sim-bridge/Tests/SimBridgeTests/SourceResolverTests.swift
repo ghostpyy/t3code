@@ -44,6 +44,30 @@ final class SourceResolverTests: XCTestCase {
         XCTAssertEqual(resolved.strategy, .empty)
     }
 
+    func testDoesNotGuessFromVisibleText() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("t3-resolver-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(
+            at: root, withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appendingPathComponent("LibraryView.swift")
+        try #"Text("The house")"#.write(to: source, atomically: true, encoding: .utf8)
+        let app = SimAppInfo(
+            bundleId: "com.example.Satira",
+            name: "Satira",
+            pid: Int32(99),
+            bundlePath: nil,
+            dataContainer: nil,
+            executablePath: nil,
+            projectPath: root.path
+        )
+        let leaf = make(id: "1", role: "Text", label: "The house", identifier: nil)
+        let resolved = SourceResolver.resolve(chain: [leaf], appContext: app)
+        XCTAssertEqual(resolved.strategy, .empty)
+        XCTAssertTrue(resolved.hints.isEmpty)
+    }
+
     func testDirectHitPopulatesSnippetWhenProjectIsIndexed() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("t3-resolver-\(UUID().uuidString)")

@@ -431,14 +431,29 @@ function projectPointer(
   ) {
     return null;
   }
-  // `bounds` is the rotated AABB of the bezel cutout (CSS px). The HID
-  // coord system iOS expects is always the device's native portrait
-  // pixel grid regardless of UIDeviceOrientation, so we project the
-  // click into portrait ratios first and then scale by the portrait
-  // pixel dims. Apple's framebuffer service may republish the surface
-  // with rotated dims after rotation, which we normalize here with
-  // min/max — `display.pixelWidth/Height` could arrive in either order
-  // depending on iOS's republish timing.
+  const ratioLX = clamp(ev.x / bounds.width);
+  const ratioLY = clamp(ev.y / bounds.height);
+  const scale = display.scale > 0 ? display.scale : 1;
+  if (space === "points") {
+    const visualLandscape =
+      bounds.orientation === 3 ||
+      bounds.orientation === 4 ||
+      (bounds.orientation == null && bounds.width > bounds.height);
+    const displayLandscape = display.pixelWidth > display.pixelHeight;
+    const widthPx = visualLandscape === displayLandscape ? display.pixelWidth : display.pixelHeight;
+    const heightPx =
+      visualLandscape === displayLandscape ? display.pixelHeight : display.pixelWidth;
+    return {
+      x: ratioLX * (widthPx / scale),
+      y: ratioLY * (heightPx / scale),
+    };
+  }
+
+  // `bounds` is the rotated AABB of the bezel cutout (CSS px). Touch
+  // injection still targets iOS's native portrait digitizer grid, so HID
+  // coordinates are inverse-rotated back to portrait pixels. AX inspection
+  // uses the visual display-point space above instead; sharing this branch
+  // with AX is what made landscape clicks resolve on the wrong side.
   //
   // Mapping derived from rotating a portrait box around its center,
   // with screen-CW positive (CSS rotate(+deg) = CW):
@@ -448,8 +463,6 @@ function projectPointer(
   //   4 landscapeLeft   : rPX = rLY,     rPY = 1 - rLX    (CSS +90° = CW)
   // where rLX/rLY are the click ratios in the rotated AABB and rPX/rPY
   // are the equivalent ratios in the un-rotated portrait box.
-  const ratioLX = clamp(ev.x / bounds.width);
-  const ratioLY = clamp(ev.y / bounds.height);
   let ratioPX: number;
   let ratioPY: number;
   switch (bounds.orientation) {
@@ -470,14 +483,11 @@ function projectPointer(
       ratioPY = ratioLY;
       break;
   }
-  const scale = display.scale > 0 ? display.scale : 1;
   const portraitW = Math.min(display.pixelWidth, display.pixelHeight);
   const portraitH = Math.max(display.pixelWidth, display.pixelHeight);
-  const width = space === "points" ? portraitW / scale : portraitW;
-  const height = space === "points" ? portraitH / scale : portraitH;
   return {
-    x: ratioPX * width,
-    y: ratioPY * height,
+    x: ratioPX * portraitW,
+    y: ratioPY * portraitH,
   };
 }
 

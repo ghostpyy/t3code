@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { mapEventToProtocol } from "./simView.ts";
 
 const PORTRAIT_DISPLAY = { pixelWidth: 1170, pixelHeight: 2532, scale: 3 };
+const LANDSCAPE_DISPLAY = { pixelWidth: 2532, pixelHeight: 1170, scale: 3 };
 
 describe("mapEventToProtocol pointer rotation", () => {
   it("portrait passes ratios straight through to native pixels", () => {
@@ -86,9 +87,41 @@ describe("mapEventToProtocol pointer rotation", () => {
     expect(brResult).toEqual({ type: "inputTap", x: 0, y: 2532, phase: "down" });
   });
 
-  it("ax-hit projects in display points (uses scale)", () => {
+  it("ax-hit projects in visual display points", () => {
     const result = mapEventToProtocol(
       { kind: "ax-hit", x: 0, y: 0 },
+      {
+        bounds: { x: 0, y: 0, width: 844, height: 390, orientation: 4 },
+        display: LANDSCAPE_DISPLAY,
+      },
+    );
+    expect(result).toEqual({
+      type: "axHit",
+      x: 0,
+      y: 0,
+      mode: "select",
+    });
+  });
+
+  it("ax-hit does not inverse-rotate landscape taps", () => {
+    const result = mapEventToProtocol(
+      { kind: "ax-hit", x: 844, y: 195 },
+      {
+        bounds: { x: 0, y: 0, width: 844, height: 390, orientation: 4 },
+        display: LANDSCAPE_DISPLAY,
+      },
+    );
+    expect(result).toEqual({
+      type: "axHit",
+      x: 844,
+      y: 195,
+      mode: "select",
+    });
+  });
+
+  it("ax-hit tolerates stale portrait display metrics during landscape", () => {
+    const result = mapEventToProtocol(
+      { kind: "ax-hit", x: 844, y: 195 },
       {
         bounds: { x: 0, y: 0, width: 844, height: 390, orientation: 4 },
         display: PORTRAIT_DISPLAY,
@@ -96,8 +129,8 @@ describe("mapEventToProtocol pointer rotation", () => {
     );
     expect(result).toEqual({
       type: "axHit",
-      x: 0,
-      y: 2532 / 3,
+      x: 844,
+      y: 195,
       mode: "select",
     });
   });

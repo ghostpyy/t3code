@@ -10,6 +10,7 @@ const INIT: SimBridgeState = {
   bootStatus: null,
   displayPixel: null,
   displayScale: null,
+  displayOrientation: 1,
   error: null,
   hoveredHit: null,
   selectedHit: null,
@@ -85,10 +86,12 @@ describe("useSimBridge reducer", () => {
       pixelWidth: 1179,
       pixelHeight: 2556,
       scale: 3,
+      orientation: 4,
     };
     const next = reduce(INIT, msg);
     expect(next.displayPixel).toEqual({ width: 1179, height: 2556 });
     expect(next.displayScale).toBe(3);
+    expect(next.displayOrientation).toBe(4);
   });
 
   it("replaces dimensions on displaySurfaceChanged", () => {

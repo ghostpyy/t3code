@@ -6,8 +6,8 @@ import Foundation
 /// either `key=value` pairs or a single module shortcut:
 ///
 ///   HomeView.swift:42
-///   Satira/Views/HomeView.swift:42|Satira
-///   Satira/Views/HomeView.swift:42|kind=button|name=buyNow
+///   Module/Views/HomeView.swift:42|Module
+///   Module/Views/HomeView.swift:42|kind=button|name=buyNow
 ///
 /// Returns nil for anything that does not begin with a `.swift:<digits>`
 /// locator so callers can safely pass raw AX identifiers from UIKit or

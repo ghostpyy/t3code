@@ -46,8 +46,8 @@ export function OutlineLayer({
         const anchored = Boolean(node.identifier);
         const stroke = anchored ? "rgba(142,255,154,0.32)" : "rgba(255,255,255,0.12)";
         const lineWidth = anchored ? 1 : 0.75;
-        // Shape-conform to the underlying iOS view. Satira forwards
-        // `CALayer.cornerRadius` from the UIKit/SwiftUI source; without
+        // Shape-conform to the underlying iOS view. The inspectable source
+        // forwards `CALayer.cornerRadius`; without
         // this, every squircle button reads as a hard rectangle and the
         // overlay looks crude.
         const radius = Math.max(0, (node.frame.cornerRadius ?? 0) * scale);

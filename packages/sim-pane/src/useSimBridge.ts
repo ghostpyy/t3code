@@ -4,6 +4,7 @@ import type {
   AXHitMode,
   AXNode,
   BridgeToPane,
+  DeviceOrientation,
   DeviceInfo,
   DeviceState,
   HardwareButtonKind,
@@ -29,6 +30,7 @@ export interface SimBridgeState {
   bootStatus: string | null;
   displayPixel: { width: number; height: number } | null;
   displayScale: number | null;
+  displayOrientation: DeviceOrientation;
   error: { code: string; message: string } | null;
   hoveredHit: { chain: AXElement[]; hitIndex: number } | null;
   /** `pinRanks[i]` identifies which instance of `chain[i].identifier` the
@@ -61,6 +63,7 @@ const INITIAL_STATE: SimBridgeState = {
   bootStatus: null,
   displayPixel: null,
   displayScale: null,
+  displayOrientation: 1,
   error: null,
   hoveredHit: null,
   selectedHit: null,
@@ -134,6 +137,7 @@ function reduce(state: SimBridgeState, msg: BridgeToPane): SimBridgeState {
         ...state,
         displayPixel: { width: msg.pixelWidth, height: msg.pixelHeight },
         displayScale: msg.scale,
+        displayOrientation: msg.orientation ?? state.displayOrientation,
         // Brand-new surface (boot, runtime reattach) invalidates any pin.
         hoveredHit: null,
         selectedHit: null,
@@ -142,6 +146,7 @@ function reduce(state: SimBridgeState, msg: BridgeToPane): SimBridgeState {
       return {
         ...state,
         displayPixel: { width: msg.pixelWidth, height: msg.pixelHeight },
+        displayOrientation: msg.orientation ?? state.displayOrientation,
         // Rotation / size-class changes shuffle layout under pinned frames.
         hoveredHit: null,
         selectedHit: null,
@@ -173,8 +178,8 @@ function reduce(state: SimBridgeState, msg: BridgeToPane): SimBridgeState {
       };
       // Late-snapshot rank resolution: if the click raced ahead of the first
       // snapshot poll, selectedHit.pinRanks is all-null. The NEXT snapshot
-      // to arrive usually still contains the click-time frames (Satira's
-      // registry updates in sync with layout passes, 250ms poll cadence is
+      // to arrive usually still contains the click-time frames (the registry
+      // updates in sync with layout passes, 250ms poll cadence is
       // faster than most human scroll gestures). Recompute ranks and latch
       // any non-null entries; leave existing non-null ranks alone so a
       // later stale snapshot can't regress a known-good rank.
@@ -356,7 +361,6 @@ export function useSimBridge(): UseSimBridgeApi {
     try {
       return await bridge.screenshotToClipboard(udid);
     } catch (error) {
-      // eslint-disable-next-line no-console
       console.warn("[sim-bridge] screenshotToClipboard failed", error);
       return false;
     }

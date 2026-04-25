@@ -1,7 +1,7 @@
 import type { AXElement, AXNode } from "../protocol.ts";
 
 /** Tolerance for matching a chain frame against a snapshot bucket entry.
- *  Hit and snapshot both read from Satira's `InspectableRegistry`, so frames
+ *  Hit and snapshot both read from the same inspectable registry, so frames
  *  are byte-identical when the snapshot was captured inside the same layout
  *  pass as the hit. This epsilon absorbs the sub-point drift that can occur
  *  when the snapshot lagged the hit by a few tens of ms. */
@@ -18,8 +18,7 @@ const FRAME_EPS = 0.5;
  *
  *  Rank is `null` when:
  *    - the element has no identifier (coordinate-only hit).
- *    - the identifier is absent from the snapshot (pinned view is in a
- *      dismissed sheet, scrolled off-screen, etc.).
+ *    - the identifier is absent from the snapshot.
  *    - the bucket has only one candidate (nothing to rank — the single
  *      match wins in `refreshPinFrames` without consulting rank).
  *    - no bucket frame matches the chain frame within `FRAME_EPS` (the

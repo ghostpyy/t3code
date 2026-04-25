@@ -159,18 +159,27 @@ final class InspectableRewriter: SyntaxRewriter {
             return super.visit(node)
         }
 
-        // Skip `ViewModifier.body(content:)` — structurally detected by
-        // `func body(...) -> some View` with parameters (computed `var body`
-        // on a View has no parameters). Stamping it wraps the returned
-        // modifier chain with `.inspectable()`, which re-enters any
-        // ViewModifier implementing `.inspectable()` itself (causing
-        // infinite recursion), and duplicates anchors at every ViewModifier
-        // call site anyway. Anchors already come from the caller's stamping.
+        // Skip protocol-required style factory bodies — structurally detected
+        // by name + parameters:
+        //   * `func body(content: Content) -> some View` — `ViewModifier`.
+        //   * `func makeBody(configuration: Configuration) -> some View` —
+        //     `ButtonStyle`, `LabelStyle`, `MenuStyle`, `ToggleStyle`,
+        //     `ProgressViewStyle`, `GroupBoxStyle`, `DisclosureGroupStyle`,
+        //     `FormStyle`, etc.
+        // (`var body` on `View` is a computed property, not a function, so
+        // the parameter-count gate distinguishes it from these factories.)
+        //
+        // Stamping any of these is wrong: the body runs once per call site,
+        // so the stamp's `#fileID:#line` would be the STYLE definition, not
+        // the actual button/view location. Every call site to a shared style
+        // emits the same stamp ID, polluting the registry across screens —
+        // e.g. a `SpringPressStyle` in `ReadingExperience.swift` would tag
+        // every styled button across the whole app as "ReadingExperience.swift:565".
         //
         // Self-healing: strip any pre-existing `.inspectable()` calls from
         // prior builds so stale stamps disappear on the next run without
         // manual cleanup.
-        if isViewModifierBody(node) {
+        if isStyleFactoryBody(node) {
             let stripped = InspectableStripper()
                 .rewrite(Syntax(body))
                 .as(CodeBlockSyntax.self) ?? body
@@ -181,8 +190,9 @@ final class InspectableRewriter: SyntaxRewriter {
         return DeclSyntax(node.with(\.body, body.with(\.statements, rewritten)))
     }
 
-    private func isViewModifierBody(_ node: FunctionDeclSyntax) -> Bool {
-        guard node.name.text == "body" else { return false }
+    private func isStyleFactoryBody(_ node: FunctionDeclSyntax) -> Bool {
+        let name = node.name.text
+        guard name == "body" || name == "makeBody" else { return false }
         let params = node.signature.parameterClause.parameters
         return !params.isEmpty
     }
@@ -434,26 +444,37 @@ final class InspectableRewriter: SyntaxRewriter {
             "SignInWithAppleButton",
         ]
 
-        /// SwiftUI modifiers whose trailing closure is a NON-`@ViewBuilder`
+        /// SwiftUI calls whose trailing closure is a NON-`@ViewBuilder`
         /// result builder — its top-level expressions are not Views, but
         /// nested expressions (the result builder's children) typically
         /// contain `@ViewBuilder` content closures that DO need stamping.
         ///
-        /// Example: `.toolbar { ToolbarItem { Button(...) } }`. The
-        /// `.toolbar` closure is `@ToolbarContentBuilder`, so `ToolbarItem`
-        /// itself must NOT be wrapped with `.inspectable()` (a `View`
-        /// extension that doesn't apply to `ToolbarContent`). But the
-        /// `ToolbarItem`'s own trailing closure IS `@ViewBuilder`, so its
-        /// inner `Button` does need stamping.
+        /// Examples:
+        /// - `.toolbar { ToolbarItem { Button(...) } }` — closure is
+        ///   `@ToolbarContentBuilder`, so `ToolbarItem` itself must NOT be
+        ///   wrapped with `.inspectable()` (a `View` extension that doesn't
+        ///   apply to `ToolbarContent`). But the `ToolbarItem`'s own trailing
+        ///   closure IS `@ViewBuilder`, so its inner `Button` does need
+        ///   stamping.
+        /// - `TabView { Tab("…", value: …) { content } }` — iOS 18+
+        ///   value-based `TabView` takes `@TabContentBuilder`, and `Tab` is
+        ///   a slot type whose `value:` generic must be inferable by
+        ///   `TabView`'s selection binding. Wrapping `Tab(...) { ... }` with
+        ///   `.inspectable()` returns `some View` and erases that type, so
+        ///   `Tab`'s `value:` argument fails to bind to the selection
+        ///   parameter ("type 'Hashable' has no member 'library'"). Tab's
+        ///   own content closure is `@ViewBuilder`, so the inner view does
+        ///   get stamped via the capitalized-init rule.
         ///
         /// Strategy: descend into the closure body and recurse nested
         /// function calls, but do NOT stamp the closure's top-level
         /// expressions (since they're non-View result-builder content).
         ///
-        /// Update when a new SwiftUI release adds a new modifier whose
+        /// Update when a new SwiftUI release adds a new call whose
         /// closure is a non-`@ViewBuilder` result builder (rare).
         private static let nonViewBuilderModifiers: Set<String> = [
             "toolbar",
+            "TabView",
         ]
 
         /// Semantic interpretation of a closure attached to a function
@@ -513,12 +534,15 @@ final class InspectableRewriter: SyntaxRewriter {
 
             let name = Self.callName(call)
 
-            // Self-heal `.toolbar`'s closure: previous builds incorrectly
-            // wrapped each top-level ToolbarItem with `.inspectable()` —
-            // a `View` extension that doesn't apply to `ToolbarContent`.
-            // Strip those stale top-level stamps; new runs won't produce
-            // them because `.toolbar` is `.contentBuilder` semantic.
-            if name == "toolbar", let closure = call.trailingClosure {
+            // Self-heal closures whose top level is non-`@ViewBuilder` content
+            // (`.toolbar`, `TabView`, …): previous builds may have wrapped
+            // each top-level slot with `.inspectable()` — a `View` extension
+            // that doesn't apply to `ToolbarContent` and breaks `TabView`'s
+            // value-based selection binding. Strip those stale top-level
+            // stamps; new runs won't produce them because the semantic is
+            // `.contentBuilder`.
+            if Self.nonViewBuilderModifiers.contains(name),
+               let closure = call.trailingClosure {
                 let healed = closure.with(
                     \.statements,
                     Self.stripTopLevelInspectable(in: closure.statements)

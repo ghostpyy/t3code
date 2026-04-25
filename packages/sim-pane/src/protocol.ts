@@ -90,6 +90,7 @@ export interface InspectableAnchor {
 }
 
 export type AXHitMode = "hover" | "select";
+export type DeviceOrientation = 1 | 2 | 3 | 4;
 
 export type HardwareButtonKind = "home" | "lock" | "siri" | "side" | "applePay" | "keyboard";
 
@@ -117,8 +118,14 @@ export type BridgeToPane =
       pixelWidth: number;
       pixelHeight: number;
       scale: number;
+      orientation?: DeviceOrientation;
     }
-  | { type: "displaySurfaceChanged"; pixelWidth: number; pixelHeight: number }
+  | {
+      type: "displaySurfaceChanged";
+      pixelWidth: number;
+      pixelHeight: number;
+      orientation?: DeviceOrientation;
+    }
   | { type: "axHitResponse"; chain: AXElement[]; hitIndex: number; mode: AXHitMode }
   | { type: "axTreeResponse"; root: AXElement }
   | {

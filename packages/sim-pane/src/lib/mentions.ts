@@ -29,12 +29,6 @@ export interface SimElementMention {
 export const SIM_INSPECT_MARKER_START = "<!-- @here:sim-element:start -->";
 export const SIM_INSPECT_MARKER_END = "<!-- @here:sim-element:end -->";
 const MAX_CONTEXT_LINES = 2;
-const NOISY_CONTEXT_FILES = new Set([
-  "AtmosphericBackground.swift",
-  "ContentView.swift",
-  "DesignSystem.swift",
-  "EnvironmentParticleView.swift",
-]);
 
 /** Build a mention payload from an AX element + its hit chain.
  *  `chain[0]` is the target; the rest are ancestors leaf→root. */
@@ -67,8 +61,8 @@ export function renderMentionMarkdown(m: SimElementMention): string {
   const anchoredAncestors = m.ancestors.filter(
     (a): a is AncestorRef & { anchor: InspectableAnchor } => a.anchor !== null,
   );
-  const openAnchor = m.anchor ?? anchoredAncestors[0]?.anchor ?? null;
   const verifiedHint = pickVerifiedHint(m.sourceHints);
+  const openAnchor = m.anchor ?? anchoredAncestors[0]?.anchor ?? null;
 
   const lines: string[] = [SIM_INSPECT_MARKER_START];
 
@@ -81,6 +75,10 @@ export function renderMentionMarkdown(m: SimElementMention): string {
     const href = verifiedHint ? `${verifiedHint.absolutePath}:${verifiedHint.line}` : null;
     parts.push(href ? `[\`${display}\`](${href})` : `**${display}**`);
     if (openAnchor.alias) parts.push(openAnchor.alias);
+  } else if (verifiedHint) {
+    parts.push(
+      `[\`${sourceHintDisplay(verifiedHint)}\`](${verifiedHint.absolutePath}:${verifiedHint.line})`,
+    );
   }
   const elementSummary = describeElement(m);
   const identityHasAnchor = openAnchor != null;
@@ -96,7 +94,7 @@ export function renderMentionMarkdown(m: SimElementMention): string {
     lines.push(`Value: \`${truncate(m.value, 160)}\``);
   }
 
-  const snippetHint = openAnchor ? pickSnippetHint(verifiedHint ? [verifiedHint] : []) : null;
+  const snippetHint = pickSnippetHint(verifiedHint ? [verifiedHint] : []);
   if (snippetHint) {
     lines.push("```swift");
     lines.push(...formatSnippetLines(snippetHint));
@@ -138,20 +136,10 @@ function usefulContextLinks(
     const key = anchorDisplay(ancestor.anchor);
     if (key === primaryKey) continue;
     if (seen.has(key)) continue;
-    if (isNoisyContextAnchor(ancestor.anchor)) continue;
     seen.add(key);
     out.push(key);
   }
   return out;
-}
-
-function isNoisyContextAnchor(anchor: InspectableAnchor): boolean {
-  return NOISY_CONTEXT_FILES.has(basename(anchor.file));
-}
-
-function basename(path: string): string {
-  const slash = path.lastIndexOf("/");
-  return slash === -1 ? path : path.slice(slash + 1);
 }
 
 function round(n: number): number {
@@ -160,6 +148,19 @@ function round(n: number): number {
 
 function truncate(s: string, max: number): string {
   return s.length <= max ? s : `${s.slice(0, max - 1)}…`;
+}
+
+function sourceHintDisplay(hint: AXSourceHint): string {
+  const path = hint.absolutePath.replace(/\\/g, "/");
+  const sources = "/Sources/";
+  const idx = path.lastIndexOf(sources);
+  const rel = idx === -1 ? basename(path) : path.slice(idx + sources.length);
+  return `${rel}:${hint.line}`;
+}
+
+function basename(path: string): string {
+  const slash = path.lastIndexOf("/");
+  return slash === -1 ? path : path.slice(slash + 1);
 }
 
 /** First verified hint that actually carries snippet text. */

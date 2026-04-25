@@ -39,9 +39,8 @@ static inline void T3SimLog(const char *fmt, ...) {
     NSArray<NSValue *> *_outlinePixelRects;
     NSValue *_primaryPixelRect;
     // Rounded-rect radius of the innermost hit, already scaled into source-pixel
-    // space. Travels from Satira's `resolvedCornerRadius()` (UIKit CALayer read)
-    // through the outline IPC so the picker can paint a path that matches the
-    // element's actual curvature instead of a flat rectangle.
+    // space. Travels through the outline IPC so the picker can paint a path that
+    // matches the element's actual curvature instead of a flat rectangle.
     CGFloat _primaryCornerRadius;
     // Local-monitor-based input pipeline. Registered with NSEvent in init,
     // torn down in dealloc. This bypasses NSView hit-testing entirely so
@@ -205,6 +204,7 @@ static inline void T3SimLog(const char *fmt, ...) {
 
 - (void)updateSourcePixelSize:(NSSize)size {
     _sourcePixelSize = size;
+    T3SimLog("setSourcePixelSize size=%.0fx%.0f", size.width, size.height);
     [self applyLayerHostGeometry];
 }
 
@@ -233,18 +233,27 @@ static inline void T3SimLog(const char *fmt, ...) {
     _layerHost.bounds = CGRectMake(0, 0, _sourcePixelSize.width, _sourcePixelSize.height);
     CGFloat sx = viewW / _sourcePixelSize.width;
     CGFloat sy = viewH / _sourcePixelSize.height;
-    _layerHost.transform = CATransform3DMakeScale(sx, sy, 1.0);
+    CGFloat s = MIN(sx, sy);
+    CGFloat scaledW = _sourcePixelSize.width * s;
+    CGFloat scaledH = _sourcePixelSize.height * s;
+    _layerHost.position = CGPointMake((viewW - scaledW) * 0.5, (viewH - scaledH) * 0.5);
+    _layerHost.transform = CATransform3DMakeScale(s, s, 1.0);
+    CGFloat aspectDelta = (sx != 0.0) ? fabs(sy - sx) / sx : 0.0;
+    T3SimLog("layerHost view=(%.1fx%.1f) src=(%.0fx%.0f) s=%.4f delta=%.2f%%",
+             viewW, viewH, _sourcePixelSize.width, _sourcePixelSize.height,
+             s, aspectDelta * 100.0);
 
     // Mirror CALayerHost geometry on the outline layers so paths authored
     // in source-pixel space land pixel-perfect on the simulator content.
     // Inverse-scale the corner radius (which is in view-space points) so it
     // renders as the right CSS px after the layer's own scale transform.
     _chainOutline.bounds = _layerHost.bounds;
+    _chainOutline.position = _layerHost.position;
     _chainOutline.transform = _layerHost.transform;
     _primaryOutline.bounds = _layerHost.bounds;
+    _primaryOutline.position = _layerHost.position;
     _primaryOutline.transform = _layerHost.transform;
-    CGFloat avgScale = (sx + sy) * 0.5;
-    CGFloat outlineCornerRadius = (avgScale > 0.0 && _cornerRadius > 0.0) ? (_cornerRadius / avgScale) : 0.0;
+    CGFloat outlineCornerRadius = (s > 0.0 && _cornerRadius > 0.0) ? (_cornerRadius / s) : 0.0;
     _chainOutline.cornerRadius = outlineCornerRadius;
     _primaryOutline.cornerRadius = outlineCornerRadius;
     if (@available(macOS 11.0, *)) {

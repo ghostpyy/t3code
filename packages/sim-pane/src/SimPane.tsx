@@ -92,6 +92,7 @@ export function SimPane({
       bootStatus,
       displayPixel,
       displayScale,
+      displayOrientation,
       error,
       hoveredHit,
       selectedHit,
@@ -164,13 +165,14 @@ export function SimPane({
   const MIN_SCREEN_WIDTH = 220;
 
   const isLandscape = orientation === 3 || orientation === 4;
-  const rotationDeg = orientation === 2 ? 180 : orientation === 3 ? -90 : orientation === 4 ? 90 : 0;
+  const rotationDeg =
+    orientation === 2 ? 180 : orientation === 3 ? -90 : orientation === 4 ? 90 : 0;
 
   const { screenWidth, screenHeight, envelopeWidth, envelopeHeight, needsScroll } = useMemo(() => {
     const px = displayPixel ?? FALLBACK_PIXEL;
     const devicePxPerPoint = displayScale ?? FALLBACK_SCALE;
-    const deviceCssWidth = px.width / devicePxPerPoint;
-    const deviceCssHeight = px.height / devicePxPerPoint;
+    const deviceCssWidth = Math.min(px.width, px.height) / devicePxPerPoint;
+    const deviceCssHeight = Math.max(px.width, px.height) / devicePxPerPoint;
     const bezel2 = 2 * descriptor.bezelThickness;
     // The chrome is laid out in PORTRAIT and CSS-rotated. Its rotated AABB is
     // (outerHeight, outerWidth) in landscape — the visible envelope on stage.
@@ -193,8 +195,7 @@ export function SimPane({
     const portraitOuterHeight = finalHeight + bezel2;
     const aabbWidth = isLandscape ? portraitOuterHeight : portraitOuterWidth;
     const aabbHeight = isLandscape ? portraitOuterWidth : portraitOuterHeight;
-    const wouldOverflow =
-      aabbWidth > resolvedMaxWidth + 0.5 || aabbHeight > availableHeight + 0.5;
+    const wouldOverflow = aabbWidth > resolvedMaxWidth + 0.5 || aabbHeight > availableHeight + 0.5;
     return {
       screenWidth: finalWidth,
       screenHeight: finalHeight,
@@ -259,6 +260,10 @@ export function SimPane({
     if (inspectOn) enableAx();
   }, [inspectOn, publishMode, enableAx]);
 
+  useEffect(() => {
+    setOrientation(displayOrientation);
+  }, [displayOrientation]);
+
   useEffect(
     () => () => {
       publishBounds(OFF_SCREEN_BOUNDS);
@@ -300,7 +305,7 @@ export function SimPane({
   // snapshot and falls back to centroid-nearest (which picks the wrong
   // ForEach instance after large scrolls — Bug B). The cost is one BFS
   // walk per 250ms while the user has inspect open; cheap because the
-  // daemon pulls directly from Satira's in-process inspector HTTP server.
+  // daemon pulls directly from the app's in-process inspector when present.
   useEffect(() => {
     if (!inspectOn) return;
     requestSnapshot();

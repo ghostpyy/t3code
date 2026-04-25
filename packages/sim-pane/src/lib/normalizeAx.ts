@@ -72,6 +72,8 @@ function toSourceHints(raw: unknown): AXSourceHint[] | null {
         line: hint.line,
         reason: typeof hint.reason === "string" ? hint.reason : "",
         confidence: typeof hint.confidence === "number" ? hint.confidence : 0,
+        snippet: typeof hint.snippet === "string" ? hint.snippet : null,
+        snippetStartLine: typeof hint.snippetStartLine === "number" ? hint.snippetStartLine : null,
       },
     ];
   });

@@ -96,8 +96,8 @@ extension PaneToBridge: Decodable {
 public enum BridgeToPane: Sendable {
     case deviceListResponse(devices: [DeviceInfo])
     case deviceState(udid: String, state: DeviceState, bootStatus: String?)
-    case displayReady(contextId: UInt32, pixelWidth: Int, pixelHeight: Int, scale: Double)
-    case displaySurfaceChanged(pixelWidth: Int, pixelHeight: Int)
+    case displayReady(contextId: UInt32, pixelWidth: Int, pixelHeight: Int, scale: Double, orientation: Int)
+    case displaySurfaceChanged(pixelWidth: Int, pixelHeight: Int, orientation: Int)
     case axHitResponse(chain: [AXElement], hitIndex: Int, mode: PaneToBridge.AXHitMode)
     case axTreeResponse(root: AXElement)
     case axSnapshotResponse(nodes: [AXNode], appContext: SimAppInfo?)
@@ -106,7 +106,7 @@ public enum BridgeToPane: Sendable {
 
 extension BridgeToPane: Encodable {
     private enum CodingKeys: String, CodingKey {
-        case type, devices, udid, state, bootStatus, contextId, pixelWidth, pixelHeight, scale, chain, hitIndex, root, code, message, detail, mode, nodes, appContext
+        case type, devices, udid, state, bootStatus, contextId, pixelWidth, pixelHeight, scale, orientation, chain, hitIndex, root, code, message, detail, mode, nodes, appContext
     }
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
@@ -119,16 +119,18 @@ extension BridgeToPane: Encodable {
             try c.encode(udid, forKey: .udid)
             try c.encode(state, forKey: .state)
             try c.encodeIfPresent(bootStatus, forKey: .bootStatus)
-        case let .displayReady(contextId, w, h, scale):
+        case let .displayReady(contextId, w, h, scale, orientation):
             try c.encode("displayReady", forKey: .type)
             try c.encode(contextId, forKey: .contextId)
             try c.encode(w, forKey: .pixelWidth)
             try c.encode(h, forKey: .pixelHeight)
             try c.encode(scale, forKey: .scale)
-        case let .displaySurfaceChanged(w, h):
+            try c.encode(orientation, forKey: .orientation)
+        case let .displaySurfaceChanged(w, h, orientation):
             try c.encode("displaySurfaceChanged", forKey: .type)
             try c.encode(w, forKey: .pixelWidth)
             try c.encode(h, forKey: .pixelHeight)
+            try c.encode(orientation, forKey: .orientation)
         case let .axHitResponse(chain, hitIndex, mode):
             try c.encode("axHitResponse", forKey: .type)
             try c.encode(chain, forKey: .chain)

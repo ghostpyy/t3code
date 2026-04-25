@@ -5,8 +5,8 @@ import { tokens } from "../tokens.ts";
 
 const EMPTY_HINTS: AXSourceHint[] = [];
 
-/** Roles Satira's `.inspectable()` modifier and SwiftUI runtime emit that
- *  carry no semantic meaning — every stamped view yields role="Inspectable",
+/** Roles the `.inspectable()` modifier and SwiftUI runtime emit that
+ *  carry no semantic meaning. Every stamped view yields role="Inspectable",
  *  and AX containers leak "AXUIElement" / "Group" / "Other". */
 const NOISY_ROLES = new Set(["Inspectable", "AXUIElement", "Group", "Other", "Generic"]);
 
@@ -100,7 +100,7 @@ export function InspectCard({
   const sourceLabel = sourceHint
     ? sourceContext.directAnchor
       ? "direct anchor"
-      : "via ancestor"
+      : "verified source"
     : null;
 
   const primary = preview

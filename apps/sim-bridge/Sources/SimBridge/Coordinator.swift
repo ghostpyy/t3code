@@ -192,7 +192,13 @@ final class Coordinator {
         currentOrientation = 1
         postBootDone = false
         // contextId=0 tells the renderer to detach its CALayerHost.
-        send(.displayReady(contextId: 0, pixelWidth: 0, pixelHeight: 0, scale: 1.0))
+        send(.displayReady(
+            contextId: 0,
+            pixelWidth: 0,
+            pixelHeight: 0,
+            scale: 1.0,
+            orientation: currentOrientation
+        ))
         send(.deviceState(udid: udid, state: .shutdown, bootStatus: nil))
         broadcastDeviceList()
     }
@@ -208,8 +214,12 @@ final class Coordinator {
                 DispatchQueue.main.async {
                     guard let self else { return }
                     self.currentInfo = info
-                    self.layerBridge.update(surface: surface, info: info, orientation: self.currentOrientation)
-                    FileHandle.standardError.write(Data("[display] surface contextId=\(self.layerBridge.contextId) px=\(info.pixelWidth)x\(info.pixelHeight) scale=\(info.scale) orientation=\(self.currentOrientation)\n".utf8))
+                    let orientation = Self.displayOrientation(
+                        requested: self.currentOrientation,
+                        info: info
+                    )
+                    self.layerBridge.update(surface: surface, info: info, orientation: orientation)
+                    FileHandle.standardError.write(Data("[display] surface contextId=\(self.layerBridge.contextId) px=\(info.pixelWidth)x\(info.pixelHeight) scale=\(info.scale) orientation=\(orientation)\n".utf8))
                     self.emitDisplayReady(info: info)
                 }
             },
@@ -230,7 +240,8 @@ final class Coordinator {
     /// the source, so we swap dims based on the active UIInterfaceOrientation
     /// rather than trusting `info.pixelWidth/Height`'s native order.
     private func emitDisplayReady(info: Display.Info) {
-        let isLandscape = currentOrientation == 3 || currentOrientation == 4
+        let orientation = Self.displayOrientation(requested: currentOrientation, info: info)
+        let isLandscape = orientation == 3 || orientation == 4
         let longEdge = max(info.pixelWidth, info.pixelHeight)
         let shortEdge = min(info.pixelWidth, info.pixelHeight)
         let outW = isLandscape ? longEdge : shortEdge
@@ -239,8 +250,17 @@ final class Coordinator {
             contextId: layerBridge.contextId,
             pixelWidth: outW,
             pixelHeight: outH,
-            scale: Double(info.scale)
+            scale: Double(info.scale),
+            orientation: orientation
         ))
+    }
+
+    nonisolated static func displayOrientation(requested: Int, info: Display.Info) -> Int {
+        let clamped = max(1, min(4, requested))
+        if info.pixelWidth > info.pixelHeight && (clamped == 1 || clamped == 2) {
+            return clamped == 2 ? 3 : 4
+        }
+        return clamped
     }
 
     private func wireAuxiliaryServices(simDevice: SimDevice) {
@@ -376,7 +396,8 @@ final class Coordinator {
         // chrome flip first, masking the ~2-frame stall while iOS itself
         // animates the in-app rotation.
         if let info = currentInfo {
-            layerBridge.setOrientation(clamped, info: info)
+            let orientation = Self.displayOrientation(requested: clamped, info: info)
+            layerBridge.setOrientation(orientation, info: info)
             // Republish dims so native CALayerHost.bounds tracks the new
             // orientation. Without this, native keeps the previous-orientation
             // dims and the imported rootLayer (now landscape) renders against
@@ -413,6 +434,7 @@ final class Coordinator {
         let inspectorRef = inspector
         let displayRef = display
         let info = currentInfo
+        let requestedOrientation = currentOrientation
 
         let seq: UInt64
         if mode == .hover {
@@ -429,60 +451,72 @@ final class Coordinator {
             let tApp = CFAbsoluteTimeGetCurrent()
             let hitX = Int(x.rounded())
             let hitY = Int(y.rounded())
+            let orientation = info.map {
+                Self.displayOrientation(requested: requestedOrientation, info: $0)
+            } ?? requestedOrientation
+            let bounds = Self.displayBounds(info, orientation: orientation)
 
-            let plugin = Self.pluginChain(x: x, y: y, appContext: appContext)
+            let plugin = Self.pluginChain(
+                x: x, y: y, appContext: appContext, display: bounds
+            )
             let tPlugin = CFAbsoluteTimeGetCurrent()
             let axChain = axInspectorRef.map { $0.hitTest(x: hitX, y: hitY) } ?? []
             let legacyChain: [AXElement] = axChain.isEmpty
                 ? (inspectorRef?.hitTest(x: hitX, y: hitY) ?? [])
                 : []
-            var chain: [AXElement]
-            var usedFallback: String
-            if !plugin.isEmpty {
-                chain = plugin
-                usedFallback = !axChain.isEmpty ? "plugin+ax"
-                    : !legacyChain.isEmpty ? "plugin+legacy" : "plugin"
-            } else if !axChain.isEmpty {
-                chain = axChain
-                usedFallback = "ax"
+            // Pick the most trustworthy AX candidate, normalizing once.
+            let live: [AXElement]
+            let liveSource: String
+            if !axChain.isEmpty {
+                live = Self.normalizeHitChain(
+                    axChain, hitX: x, hitY: y, info: info, orientation: orientation
+                )
+                liveSource = "ax"
+            } else if !legacyChain.isEmpty {
+                live = Self.normalizeHitChain(
+                    legacyChain, hitX: x, hitY: y, info: info, orientation: orientation
+                )
+                liveSource = "legacy"
             } else {
-                chain = legacyChain
-                usedFallback = "legacy"
+                live = []
+                liveSource = "none"
             }
-            let usedPlugin = !plugin.isEmpty
+            let resolution = Self.resolveHitChain(
+                plugin: plugin,
+                live: live,
+                liveSource: liveSource,
+                hitX: x,
+                hitY: y,
+                display: bounds,
+                appContext: appContext
+            )
+            var chain = resolution.chain
+            let usedFallback = resolution.label
             let tHit = CFAbsoluteTimeGetCurrent()
 
             if Self.isUnhydratedChain(chain) {
-                // Xcode 26.2 returned a chain with no attrs/frame and the
-                // plugin isn't available (target app lacks the debug
-                // `InspectableServer` or isn't Satira). Surface a terse
-                // HitPoint marker so the UI still has something to draw —
-                // no synthesis from pixels; the pane explains what's
-                // actually missing.
+                // AX returned a chain with no attrs/frame and the in-app
+                // plugin had nothing to offer either (target app lacks the
+                // debug `InspectableServer` or it returned no nodes for this
+                // point). Surface a terse HitPoint marker so the pane can
+                // explain what's actually missing — no synthesis from pixels.
                 chain = [Self.syntheticHitPoint(x: x, y: y, appContext: appContext)]
             }
 
             _ = displayRef
-            let normalized = Self.normalizeHitChain(
-                chain,
-                hitX: x,
-                hitY: y,
-                info: info,
-                alreadyDisplayPoints: usedPlugin
-            )
             let hinted: [AXElement]
             if mode == .select {
-                let resolved = SourceResolver.resolve(chain: normalized, appContext: appContext)
-                hinted = Self.attachSourceHints(resolved.hints, to: normalized)
+                let resolved = SourceResolver.resolve(chain: chain, appContext: appContext)
+                hinted = Self.attachSourceHints(resolved.hints, to: chain)
             } else {
-                hinted = normalized
+                hinted = chain
             }
             let decorated = hinted.map { Self.withAppContext($0, appContext: appContext) }
             // Pure-geometry leaf pick: the element with the smallest non-stub
             // frame is what the human visually clicked on. Wrappers and stage
             // roots have larger areas and lose by definition. The plugin path
-            // already returns the chain smallest-first (Satira's hit-test sorts
-            // by area+z), so smallestUsableHit returns 0 there for free.
+            // normally returns the chain smallest-first, so this keeps both
+            // sources aligned.
             let hitIndex = Self.smallestUsableHit(in: hinted)
 
             let tDone = CFAbsoluteTimeGetCurrent()
@@ -526,17 +560,13 @@ final class Coordinator {
         hitX: Double,
         hitY: Double,
         info: Display.Info?,
+        orientation: Int? = nil,
         alreadyDisplayPoints: Bool = false
     ) -> [AXElement] {
         if alreadyDisplayPoints { return chain }
         guard !chain.isEmpty, let info else { return chain }
         let scale = max(Double(info.scale), 1)
-        let display = AXFrame(
-            x: 0,
-            y: 0,
-            width: Double(info.pixelWidth) / scale,
-            height: Double(info.pixelHeight) / scale
-        )
+        guard let display = displayBounds(info, orientation: orientation) else { return chain }
         let divided = chain.map { divide($0, by: scale) }
         let localized = localize(chain)
         let dividedLocalized = localize(divided)
@@ -545,6 +575,146 @@ final class Coordinator {
             hitChainScore($0, hitX: hitX, hitY: hitY, display: display) <
                 hitChainScore($1, hitX: hitX, hitY: hitY, display: display)
         } ?? chain
+    }
+
+    nonisolated static func displayBounds(
+        _ info: Display.Info?,
+        orientation: Int? = nil
+    ) -> AXFrame? {
+        guard let info else { return nil }
+        let scale = max(Double(info.scale), 1)
+        let effectiveOrientation = orientation.map { max(1, min(4, $0)) } ??
+            (info.pixelWidth > info.pixelHeight ? 4 : 1)
+        let isLandscape = effectiveOrientation == 3 || effectiveOrientation == 4
+        let longEdge = Double(max(info.pixelWidth, info.pixelHeight)) / scale
+        let shortEdge = Double(min(info.pixelWidth, info.pixelHeight)) / scale
+        return AXFrame(
+            x: 0,
+            y: 0,
+            width: isLandscape ? longEdge : shortEdge,
+            height: isLandscape ? shortEdge : longEdge
+        )
+    }
+
+    nonisolated private static func hasSpecificLiveHit(_ chain: [AXElement]) -> Bool {
+        guard !chain.isEmpty, !isUnhydratedChain(chain) else { return false }
+        return chain.contains { element in
+            hasUsableFrame(element.frame) &&
+                (!isGenericRole(element.role) ||
+                    !(element.label?.isEmpty ?? true) ||
+                    !(element.value?.isEmpty ?? true) ||
+                    AXIdentifier.parse(element.identifier) != nil)
+        }
+    }
+
+    /// Plugin-first hit resolution.
+    ///
+    /// The in-app `InspectableServer` runs inside the target app's SwiftUI
+    /// graph, owns the visibility filter (mount tracker), and emits
+    /// per-call-site `#fileID:#line` identifiers. It is structurally
+    /// better-informed than out-of-process AX, which on Xcode 26.2 returns
+    /// unhydrated chains (no role/label/frame) unless VoiceOver is running.
+    ///
+    /// 1. AX has a *specific live hit* → enrich its leaf with the plugin's
+    ///    source identifier — best of both: AX semantics + in-process source.
+    /// 2. AX missing or unhydrated, plugin non-empty → trust the plugin chain
+    ///    directly. The previous AX-first design discarded plugin data
+    ///    whenever AX failed, leaving the pane with a 48×48 "Unverified
+    ///    source" hitpoint despite the bridge already knowing the real frame
+    ///    and source location.
+    /// 3. AX live but unhydrated, no plugin → keep the AX chain so the
+    ///    `isUnhydratedChain` coercion at the call site swaps in the
+    ///    synthetic HitPoint and the pane can explain what's missing.
+    /// 4. Nothing at all → empty chain.
+    nonisolated static func resolveHitChain(
+        plugin: [AXElement],
+        live: [AXElement],
+        liveSource: String,
+        hitX: Double,
+        hitY: Double,
+        display: AXFrame?,
+        appContext: SimAppInfo?
+    ) -> (chain: [AXElement], label: String) {
+        if hasSpecificLiveHit(live) {
+            let chain = attachVerifiedPluginSource(
+                plugin,
+                to: live,
+                hitX: hitX,
+                hitY: hitY,
+                display: display,
+                appContext: appContext
+            )
+            let label = plugin.isEmpty ? liveSource : "\(liveSource)+plugin-source"
+            return (chain, label)
+        }
+        if !plugin.isEmpty {
+            let label = live.isEmpty ? "plugin" : "plugin-over-\(liveSource)"
+            return (plugin, label)
+        }
+        if !live.isEmpty {
+            return (live, liveSource)
+        }
+        return ([], "empty")
+    }
+
+    nonisolated private static func attachVerifiedPluginSource(
+        _ plugin: [AXElement],
+        to live: [AXElement],
+        hitX: Double,
+        hitY: Double,
+        display: AXFrame?,
+        appContext: SimAppInfo?
+    ) -> [AXElement] {
+        guard !plugin.isEmpty, !live.isEmpty else { return live }
+        let liveIndex = smallestUsableHit(in: live)
+        let target = live[liveIndex]
+        guard hasUsableFrame(target.frame),
+              let source = bestPluginSource(
+                plugin,
+                for: target.frame,
+                hitX: hitX,
+                hitY: hitY,
+                display: display
+              )
+        else { return live }
+
+        let hints = SourceResolver.resolve(chain: [source], appContext: appContext).hints
+        var out = live
+        out[liveIndex] = AXElement(
+            id: target.id,
+            role: target.role,
+            label: target.label,
+            value: target.value,
+            frame: target.frame,
+            identifier: target.identifier,
+            enabled: target.enabled,
+            selected: target.selected,
+            children: target.children,
+            appContext: target.appContext,
+            sourceHints: hints.isEmpty ? target.sourceHints : hints
+        )
+        return out
+    }
+
+    nonisolated private static func bestPluginSource(
+        _ plugin: [AXElement],
+        for target: AXFrame,
+        hitX: Double,
+        hitY: Double,
+        display: AXFrame?
+    ) -> AXElement? {
+        plugin
+            .filter {
+                AXIdentifier.parse($0.identifier) != nil &&
+                    sourceCandidateIsVisible($0.frame, hitX: hitX, hitY: hitY, display: display) &&
+                    sourceFrameMatchesTarget($0.frame, target)
+            }
+            .min {
+                let lhs = area($0.frame)
+                let rhs = area($1.frame)
+                if lhs == rhs { return $0.id < $1.id }
+                return lhs < rhs
+            }
     }
 
     nonisolated private static func localize(_ chain: [AXElement]) -> [AXElement] {
@@ -653,8 +823,7 @@ final class Coordinator {
     /// Smallest-area-first hit pick. The element with the smallest usable
     /// frame is the one the human's finger actually landed on; wrappers and
     /// stage roots have larger frames and cannot be the visual target.
-    /// Identical algorithm to Satira-side `InspectableHitTest` so both code
-    /// paths converge on the same answer.
+    /// Mirrors the app-side inspectable hit-test so both code paths converge.
     ///
     /// Falls back to the chain's leading element only when every entry is a
     /// 1×1 coordinate stub (the synthetic-hit-point degenerate case) — the
@@ -730,6 +899,45 @@ final class Coordinator {
             frame.y + max(frame.height, 0) >= minY
     }
 
+    nonisolated private static func sourceCandidateIsVisible(
+        _ frame: AXFrame,
+        hitX: Double,
+        hitY: Double,
+        display: AXFrame?
+    ) -> Bool {
+        guard hasUsableFrame(frame),
+              contains(frame, x: hitX, y: hitY, padding: 1.5)
+        else { return false }
+        guard let display else { return true }
+        return intersects(frame, display: display, padding: 0)
+    }
+
+    nonisolated private static func sourceFrameMatchesTarget(
+        _ source: AXFrame,
+        _ target: AXFrame
+    ) -> Bool {
+        let sourceArea = area(source)
+        let targetArea = area(target)
+        guard sourceArea > 1, targetArea > 1 else { return false }
+        let intersection = intersectionArea(source, target)
+        guard intersection > 0 else { return false }
+        let containment = intersection / min(sourceArea, targetArea)
+        let scaleSimilarity = min(sourceArea, targetArea) / max(sourceArea, targetArea)
+        return containment >= 0.7 && scaleSimilarity >= 0.35
+    }
+
+    nonisolated private static func intersectionArea(_ a: AXFrame, _ b: AXFrame) -> Double {
+        let x1 = max(a.x, b.x)
+        let y1 = max(a.y, b.y)
+        let x2 = min(a.x + max(a.width, 0), b.x + max(b.width, 0))
+        let y2 = min(a.y + max(a.height, 0), b.y + max(b.height, 0))
+        return max(0, x2 - x1) * max(0, y2 - y1)
+    }
+
+    nonisolated private static func area(_ frame: AXFrame) -> Double {
+        max(0, frame.width) * max(0, frame.height)
+    }
+
     nonisolated private static func hasUsableFrame(_ frame: AXFrame) -> Bool {
         frame.width > 2 && frame.height > 2
     }
@@ -749,6 +957,45 @@ final class Coordinator {
                 && (element.identifier?.isEmpty ?? true)
                 && !hasUsableFrame(element.frame)
         }
+    }
+
+    /// Snapshot-shaped twin of `isUnhydratedChain`. `AXFullSnapshot.flatten`
+    /// always preserves the root, so an empty AX runtime collapses to a
+    /// single zero-frame "AXUIElement" node — useless for `refreshPinFrames`
+    /// which keys off identifiers.
+    nonisolated private static func isUnhydratedSnapshot(_ nodes: [AXNode]) -> Bool {
+        guard !nodes.isEmpty else { return false }
+        return nodes.allSatisfy { node in
+            isGenericRole(node.role)
+                && (node.label?.isEmpty ?? true)
+                && (node.value?.isEmpty ?? true)
+                && (node.identifier?.isEmpty ?? true)
+                && !hasUsableFrame(node.frame)
+        }
+    }
+
+    /// Plugin-first snapshot resolution — twin of `resolveHitChain`.
+    ///
+    /// `lastSnapshot.nodes` is what `refreshPinFrames` matches a pinned
+    /// chain against, so a snapshot that lacks the in-app `.inspectable()`
+    /// identifiers silently drops the user's selection on the next refresh
+    /// (toolbar Mention/Copy/Clear go dark even though the click landed).
+    /// Use plugin nodes whenever AX is empty or unhydrated so the snapshot
+    /// always carries the same identifier vocabulary as the hit response.
+    nonisolated static func resolveSnapshotNodes(
+        ax: [AXNode], plugin: [AXNode]?
+    ) -> (nodes: [AXNode], label: String) {
+        let axUnhydrated = isUnhydratedSnapshot(ax)
+        if !ax.isEmpty, !axUnhydrated {
+            return (ax, "ax")
+        }
+        if let plugin, !plugin.isEmpty {
+            return (plugin, ax.isEmpty ? "plugin" : "plugin-over-ax")
+        }
+        if !ax.isEmpty {
+            return (ax, "ax")
+        }
+        return ([], "empty")
     }
 
     nonisolated private static func syntheticHitPoint(
@@ -776,12 +1023,20 @@ final class Coordinator {
     }
 
     nonisolated private static func pluginChain(
-        x: Double, y: Double, appContext: SimAppInfo?
+        x: Double,
+        y: Double,
+        appContext: SimAppInfo?,
+        display: AXFrame?
     ) -> [AXElement] {
         let nodes = PluginClient.hit(x: x, y: y)
         guard !nodes.isEmpty else { return [] }
-        return nodes.map { node in
-            axElement(from: node, appContext: appContext)
+        let elements = nodes.map { axElement(from: $0, appContext: appContext) }
+        guard let leaf = elements.first,
+              sourceCandidateIsVisible(leaf.frame, hitX: x, hitY: y, display: display)
+        else { return [] }
+        return elements.filter { element in
+            hasUsableFrame(element.frame) &&
+                (display.map { intersects(element.frame, display: $0, padding: 0) } ?? true)
         }
     }
 
@@ -804,7 +1059,12 @@ final class Coordinator {
             enabled: true,
             selected: false
         )
-        let children: [AXNode] = snapshot.nodes.map { node in
+        let visible = snapshot.nodes.filter { node in
+            hasUsableFrame(node.frame) &&
+                (bounds.map { intersects(node.frame, display: $0, padding: 0) } ?? true)
+        }
+        guard !visible.isEmpty else { return nil }
+        let children: [AXNode] = visible.map { node in
             AXNode(
                 id: node.id,
                 parentId: rootId,
@@ -871,6 +1131,7 @@ final class Coordinator {
         let axInspectorRef = axInspector
         let inspectorRef = inspector
         let info = currentInfo
+        let requestedOrientation = currentOrientation
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self else { return }
@@ -878,31 +1139,22 @@ final class Coordinator {
             if let root = appContext?.projectPath {
                 SourceIndex.shared.ensureIndexed(root: root)
             }
-            let bounds: AXFrame? = info.map {
-                let scale = max(Double($0.scale), 1)
-                return AXFrame(
-                    x: 0, y: 0,
-                    width: Double($0.pixelWidth) / scale,
-                    height: Double($0.pixelHeight) / scale
-                )
+            let orientation = info.map {
+                Self.displayOrientation(requested: requestedOrientation, info: $0)
             }
+            let bounds = Self.displayBounds(info, orientation: orientation)
 
-            var nodes: [AXNode] = []
-            // Same priority as `emitHit`: plugin → AX → empty. The pane
-            // just draws whatever rects land here, so the ordering
-            // decides which source of truth wins.
-            if let pluginNodes = Self.pluginSnapshot(
-                bounds: bounds, appContext: appContext
-            ) {
-                nodes = pluginNodes
-            } else if let inspector = inspectorRef, let root = inspector.tree() {
-                nodes = AXFullSnapshot.flatten(tree: root, displayBounds: bounds)
+            var ax: [AXNode] = []
+            if let inspector = inspectorRef, let root = inspector.tree() {
+                ax = AXFullSnapshot.flatten(tree: root, displayBounds: bounds)
             } else if let axi = axInspectorRef, let root = axi.frontmost() {
-                nodes = AXFullSnapshot.flatten(tree: root, displayBounds: bounds)
+                ax = AXFullSnapshot.flatten(tree: root, displayBounds: bounds)
             }
+            let plugin = Self.pluginSnapshot(bounds: bounds, appContext: appContext)
+            let resolved = Self.resolveSnapshotNodes(ax: ax, plugin: plugin)
 
             DispatchQueue.main.async { [weak self] in
-                self?.send(.axSnapshotResponse(nodes: nodes, appContext: appContext))
+                self?.send(.axSnapshotResponse(nodes: resolved.nodes, appContext: appContext))
             }
         }
     }

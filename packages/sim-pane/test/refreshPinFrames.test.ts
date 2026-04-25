@@ -22,7 +22,7 @@ function node(partial: Partial<AXNode>): AXNode {
   return {
     id: partial.id ?? "n",
     parentId: partial.parentId ?? null,
-    role: partial.role ?? "Inspectable",
+    role: partial.role ?? "button",
     label: partial.label ?? null,
     value: partial.value ?? null,
     identifier: partial.identifier ?? null,
@@ -75,15 +75,53 @@ describe("refreshPinFrames", () => {
     expect(refreshed?.frame).toEqual({ x: 100, y: 100, width: 48, height: 48 });
   });
 
-  it("keeps elements whose identifier isn't present in the snapshot", () => {
+  it("drops the pin when the selected identifier isn't present in the snapshot", () => {
     const chain = [
       el({
         identifier: "DismissedSheet.swift:12",
         frame: { x: 0, y: 0, width: 50, height: 50 },
       }),
     ];
-    const [refreshed] = refreshPinFrames(chain, [node({ identifier: "Other.swift:1" })]);
-    expect(refreshed?.frame).toEqual({ x: 0, y: 0, width: 50, height: 50 });
+    expect(refreshPinFrames(chain, [node({ identifier: "Other.swift:1" })])).toEqual([]);
+  });
+
+  it("does not replace a live runtime element with a source-registry rectangle", () => {
+    const chain = [
+      el({
+        role: "StaticText",
+        identifier: "LibraryView.swift:1117",
+        frame: { x: 280, y: 390, width: 120, height: 42 },
+      }),
+    ];
+    const nodes = [
+      node({
+        role: "Inspectable",
+        identifier: "LibraryView.swift:1117",
+        frame: { x: 250, y: 260, width: 150, height: 218 },
+      }),
+    ];
+    expect(refreshPinFrames(chain, nodes)).toEqual([]);
+  });
+
+  it("keeps a matched leaf while dropping stale ancestors", () => {
+    const chain = [
+      el({
+        identifier: "Leaf.swift:12",
+        frame: { x: 0, y: 0, width: 50, height: 50 },
+      }),
+      el({
+        identifier: "GoneParent.swift:1",
+        frame: { x: 0, y: 0, width: 100, height: 100 },
+      }),
+    ];
+    const [refreshed] = refreshPinFrames(chain, [
+      node({
+        identifier: "Leaf.swift:12",
+        frame: { x: 10, y: 20, width: 50, height: 50 },
+      }),
+    ]);
+    expect(refreshed?.identifier).toBe("Leaf.swift:12");
+    expect(refreshed?.frame).toMatchObject({ x: 10, y: 20 });
   });
 
   it("picks the centroid-nearest candidate when multiple nodes share an identifier", () => {

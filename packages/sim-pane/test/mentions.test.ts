@@ -152,27 +152,19 @@ describe("renderMentionMarkdown", () => {
     expect(md).not.toContain("Ancestors:");
   });
 
-  it("caps parents at the useful set and filters noisy wrapper files", () => {
+  it("caps parents at two anchors", () => {
     const leaf = mk("Close", "Satira/ReadingExperience.swift:235");
     const chain = [
       leaf,
       mk("Style", "Satira/ReadingExperience.swift:479"),
-      mk("Wrapper", "Satira/DesignSystem.swift:676"),
-      mk("Chrome", "Satira/ContentView.swift:234"),
-      mk("Controls", "Satira/ReadingExperience.swift:236"),
+      mk("Wrapper", "Satira/ReadingExperience.swift:236"),
       mk("Reader", "Satira/ReadingExperience.swift:238"),
-      mk("Particles", "Satira/EnvironmentParticleView.swift:68"),
-      mk("Root", "Satira/AtmosphericBackground.swift:160"),
     ];
     const md = renderMentionMarkdown(buildSimElementMention(leaf, chain));
     expect(md).toContain("Parents:");
     expect(md).toContain("`Satira/ReadingExperience.swift:479`");
     expect(md).toContain("`Satira/ReadingExperience.swift:236`");
     expect(md).not.toContain("`Satira/ReadingExperience.swift:238`");
-    expect(md).not.toContain("DesignSystem.swift");
-    expect(md).not.toContain("ContentView.swift");
-    expect(md).not.toContain("EnvironmentParticleView.swift");
-    expect(md).not.toContain("AtmosphericBackground.swift");
   });
 
   it("uses an anchored ancestor as the identity when the leaf has no anchor", () => {
@@ -260,6 +252,28 @@ describe("renderMentionMarkdown", () => {
     const hrefMatches =
       md.match(/\]\(\/Users\/me\/Satira\/Sources\/Satira\/Views\/LibraryView\.swift:142\)/g) ?? [];
     expect(hrefMatches.length).toBe(1);
+  });
+
+  it("uses a verified source hint when the runtime element has no source identifier", () => {
+    const el = mk("The house", null, {
+      role: "StaticText",
+      sourceHints: [
+        {
+          absolutePath: "/Users/me/Satira/Sources/Satira/Views/ReadingExperience.swift",
+          line: 323,
+          reason: ".inspectable() — direct hit",
+          confidence: 0.98,
+          snippet: 'Text("The house")',
+          snippetStartLine: 323,
+        },
+      ],
+    });
+    const md = renderMentionMarkdown(buildSimElementMention(el, [el]));
+    expect(md).toContain(
+      "[`Satira/Views/ReadingExperience.swift:323`](/Users/me/Satira/Sources/Satira/Views/ReadingExperience.swift:323)",
+    );
+    expect(md).toContain("```swift");
+    expect(md).toMatch(/> 323 │ Text\("The house"\)/);
   });
 
   it("embeds a fenced swift code block when a hint carries a snippet", () => {

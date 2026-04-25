@@ -186,6 +186,11 @@ public final class LayerBridge {
         surfaceLayer.position = CGPoint(x: displayWidth / 2, y: displayHeight / 2)
         surfaceLayer.contentsScale = info.scale
         surfaceLayer.transform = CATransform3DMakeRotation(radians, 0, 0, 1)
+
+        let degrees = Int((radians * 180 / .pi).rounded())
+        FileHandle.standardError.write(Data(
+            "[geom] buf=\(Int(bufferWidth))x\(Int(bufferHeight)) ori=\(orientation) display=\(Int(displayWidth))x\(Int(displayHeight)) aspectMismatch=\(aspectMismatch) rot=\(degrees)°\n".utf8
+        ))
     }
 
     public func dispose() {

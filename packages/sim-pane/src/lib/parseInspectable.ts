@@ -1,9 +1,9 @@
 import type { InspectableAnchor } from "../protocol.ts";
 
-// Satira's `.inspectable()` stamps `accessibilityIdentifier` with the Swift
+// `.inspectable()` stamps `accessibilityIdentifier` with the Swift
 // `#fileID`-style path plus the call-site line (and an optional alias):
-//   "Satira/Views/LibraryView.swift:142"
-//   "Satira/Views/LibraryView.swift:142|name=PlayButton"
+//   "Module/Views/LibraryView.swift:142"
+//   "Module/Views/LibraryView.swift:142|name=PlayButton"
 // First segment = module, remainder (up to `.swift`) = file path inside
 // `Sources/<module>/`. This parser is the single source of truth for that
 // convention — overlay, mention builder, and source resolver all reuse it.
