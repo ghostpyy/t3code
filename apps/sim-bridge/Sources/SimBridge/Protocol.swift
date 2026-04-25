@@ -1,130 +1,151 @@
 import Foundation
 
-enum BridgeProtocol {
-    static let defaultPort: UInt16 = 17323
+// `DeviceInfo` and `DeviceState` declare `Codable` at their definition site in
+// `Simulator/ServiceContext.swift` — Swift blocks automatic synthesis from a
+// non-declaring file.
 
-    struct SourceRef: Codable, Equatable {
-        let file: String
-        let line: Int
-        var function: String?
-        var kind: String?
-        var name: String?
-        var role: String?
-        var title: String?
-        var value: String?
-        var help: String?
-        var identifier: String?
-    }
+// MARK: - Incoming (pane → daemon)
 
-    struct Frame: Codable, Equatable {
-        let x: Int
-        let y: Int
-        let w: Int
-        let h: Int
-    }
+public enum PaneToBridge: Sendable {
+    case deviceList
+    case deviceBoot(udid: String)
+    case deviceShutdown(udid: String)
+    case deviceInstall(udid: String, appPath: String)
+    case deviceLaunch(udid: String, bundleId: String)
+    case inputTap(x: Double, y: Double, phase: TapPhase)
+    case inputDrag(points: [DragPoint])
+    case inputKey(usage: Int32, down: Bool, modifiers: Int32)
+    case inputButton(kind: HardwareButton, down: Bool)
+    case axEnable
+    case axHit(x: Double, y: Double, mode: AXHitMode)
+    case axTree
+    case axSnapshot
+    case axAction(elementId: String, action: String)
+    case rotate(orientation: Int)
+    case unknown
 
-    struct AXNode: Codable, Equatable {
-        let file: String
-        let line: Int
-        var function: String?
-        var kind: String?
-        var name: String?
-        var role: String?
-        var title: String?
-        var value: String?
-        var help: String?
-        var identifier: String?
-        let frame: Frame
-    }
+    public enum TapPhase: String, Codable, Sendable { case down, up }
+    public enum AXHitMode: String, Codable, Sendable { case hover, select }
 
-    struct SimInfo: Codable, Equatable {
-        let udid: String
-        let name: String
-        let model: String
-        let status: String
-        let screenW: Int
-        let screenH: Int
+    public struct DragPoint: Codable, Sendable {
+        public let x: Double
+        public let y: Double
+        public let t: Double
     }
 }
 
-enum PaneToBridgeMessage: Decodable {
-    case tap(x: Int, y: Int)
-    case drag(fromX: Int, fromY: Int, toX: Int, toY: Int, durationMs: Int)
-    case typeText(String)
-    case pressKey(String)
-    case inspectAt(x: Int, y: Int, requestId: String)
-    case subscribeFrames(fps: Int)
-    case subscribeAx(intervalMs: Int)
-    case unknown
-
+extension PaneToBridge: Decodable {
     private enum CodingKeys: String, CodingKey {
-        case type, x, y, fromX, fromY, toX, toY, durationMs, text, key, requestId, fps, intervalMs
+        case type, udid, appPath, bundleId, x, y, phase, points, usage, down, modifiers, kind, elementId, action, orientation, mode
     }
-
-    init(from decoder: Decoder) throws {
+    public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        let type = try c.decode(String.self, forKey: .type)
-        switch type {
-        case "tap":
-            self = .tap(x: try c.decode(Int.self, forKey: .x), y: try c.decode(Int.self, forKey: .y))
-        case "drag":
-            self = .drag(
-                fromX: try c.decode(Int.self, forKey: .fromX),
-                fromY: try c.decode(Int.self, forKey: .fromY),
-                toX: try c.decode(Int.self, forKey: .toX),
-                toY: try c.decode(Int.self, forKey: .toY),
-                durationMs: try c.decode(Int.self, forKey: .durationMs)
+        let t = try c.decode(String.self, forKey: .type)
+        switch t {
+        case "deviceList": self = .deviceList
+        case "deviceBoot": self = .deviceBoot(udid: try c.decode(String.self, forKey: .udid))
+        case "deviceShutdown": self = .deviceShutdown(udid: try c.decode(String.self, forKey: .udid))
+        case "deviceInstall":
+            self = .deviceInstall(udid: try c.decode(String.self, forKey: .udid),
+                                   appPath: try c.decode(String.self, forKey: .appPath))
+        case "deviceLaunch":
+            self = .deviceLaunch(udid: try c.decode(String.self, forKey: .udid),
+                                 bundleId: try c.decode(String.self, forKey: .bundleId))
+        case "inputTap":
+            self = .inputTap(
+                x: try c.decode(Double.self, forKey: .x),
+                y: try c.decode(Double.self, forKey: .y),
+                phase: try c.decode(TapPhase.self, forKey: .phase)
             )
-        case "type-text":
-            self = .typeText(try c.decode(String.self, forKey: .text))
-        case "press-key":
-            self = .pressKey(try c.decode(String.self, forKey: .key))
-        case "inspect-at":
-            self = .inspectAt(
-                x: try c.decode(Int.self, forKey: .x),
-                y: try c.decode(Int.self, forKey: .y),
-                requestId: try c.decode(String.self, forKey: .requestId)
+        case "inputDrag":
+            self = .inputDrag(points: try c.decode([DragPoint].self, forKey: .points))
+        case "inputKey":
+            self = .inputKey(
+                usage: try c.decode(Int32.self, forKey: .usage),
+                down: try c.decode(Bool.self, forKey: .down),
+                modifiers: try c.decodeIfPresent(Int32.self, forKey: .modifiers) ?? 0
             )
-        case "subscribe-frames":
-            self = .subscribeFrames(fps: try c.decode(Int.self, forKey: .fps))
-        case "subscribe-ax":
-            self = .subscribeAx(intervalMs: try c.decode(Int.self, forKey: .intervalMs))
+        case "inputButton":
+            let kindRaw = try c.decode(String.self, forKey: .kind)
+            let kind = HardwareButton(rawValue: kindRaw) ?? .home
+            self = .inputButton(kind: kind, down: try c.decode(Bool.self, forKey: .down))
+        case "axEnable": self = .axEnable
+        case "axHit":
+            self = .axHit(
+                x: try c.decode(Double.self, forKey: .x),
+                y: try c.decode(Double.self, forKey: .y),
+                mode: try c.decodeIfPresent(AXHitMode.self, forKey: .mode) ?? .select
+            )
+        case "axTree": self = .axTree
+        case "axSnapshot": self = .axSnapshot
+        case "axAction":
+            self = .axAction(
+                elementId: try c.decode(String.self, forKey: .elementId),
+                action: try c.decode(String.self, forKey: .action)
+            )
+        case "rotate":
+            self = .rotate(orientation: try c.decode(Int.self, forKey: .orientation))
         default:
             self = .unknown
         }
     }
 }
 
-enum BridgeToPaneMessage {
-    case frame(image: Data, mime: String, w: Int, h: Int, ts: Double)
-    case axSnapshot(nodes: [BridgeProtocol.AXNode], ts: Double)
-    case sourceClicked(ref: BridgeProtocol.SourceRef, frame: BridgeProtocol.Frame, ts: Double)
-    case simInfo(BridgeProtocol.SimInfo)
-    case error(String)
-    case inspectResult(requestId: String, ref: BridgeProtocol.SourceRef?)
+// MARK: - Outgoing (daemon → pane)
 
-    func encode() throws -> Data {
-        let encoder = JSONEncoder()
+public enum BridgeToPane: Sendable {
+    case deviceListResponse(devices: [DeviceInfo])
+    case deviceState(udid: String, state: DeviceState, bootStatus: String?)
+    case displayReady(contextId: UInt32, pixelWidth: Int, pixelHeight: Int, scale: Double)
+    case displaySurfaceChanged(pixelWidth: Int, pixelHeight: Int)
+    case axHitResponse(chain: [AXElement], hitIndex: Int, mode: PaneToBridge.AXHitMode)
+    case axTreeResponse(root: AXElement)
+    case axSnapshotResponse(nodes: [AXNode], appContext: SimAppInfo?)
+    case error(code: String, message: String, detail: [String: String]?)
+}
+
+extension BridgeToPane: Encodable {
+    private enum CodingKeys: String, CodingKey {
+        case type, devices, udid, state, bootStatus, contextId, pixelWidth, pixelHeight, scale, chain, hitIndex, root, code, message, detail, mode, nodes, appContext
+    }
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
         switch self {
-        case let .frame(image, mime, w, h, ts):
-            return try encoder.encode(_FramePayload(type: "frame", image: image.base64EncodedString(), mime: mime, w: w, h: h, ts: ts))
-        case let .axSnapshot(nodes, ts):
-            return try encoder.encode(_AxSnapshotPayload(type: "ax-snapshot", nodes: nodes, ts: ts))
-        case let .sourceClicked(ref, frame, ts):
-            return try encoder.encode(_SourceClickedPayload(type: "source-clicked", ref: ref, frame: frame, ts: ts))
-        case let .simInfo(info):
-            return try encoder.encode(_SimInfoPayload(type: "sim-info", info: info))
-        case let .error(message):
-            return try encoder.encode(_ErrorPayload(type: "error", message: message))
-        case let .inspectResult(requestId, ref):
-            return try encoder.encode(_InspectResultPayload(type: "inspect-result", requestId: requestId, ref: ref))
+        case let .deviceListResponse(devices):
+            try c.encode("deviceListResponse", forKey: .type)
+            try c.encode(devices, forKey: .devices)
+        case let .deviceState(udid, state, bootStatus):
+            try c.encode("deviceState", forKey: .type)
+            try c.encode(udid, forKey: .udid)
+            try c.encode(state, forKey: .state)
+            try c.encodeIfPresent(bootStatus, forKey: .bootStatus)
+        case let .displayReady(contextId, w, h, scale):
+            try c.encode("displayReady", forKey: .type)
+            try c.encode(contextId, forKey: .contextId)
+            try c.encode(w, forKey: .pixelWidth)
+            try c.encode(h, forKey: .pixelHeight)
+            try c.encode(scale, forKey: .scale)
+        case let .displaySurfaceChanged(w, h):
+            try c.encode("displaySurfaceChanged", forKey: .type)
+            try c.encode(w, forKey: .pixelWidth)
+            try c.encode(h, forKey: .pixelHeight)
+        case let .axHitResponse(chain, hitIndex, mode):
+            try c.encode("axHitResponse", forKey: .type)
+            try c.encode(chain, forKey: .chain)
+            try c.encode(hitIndex, forKey: .hitIndex)
+            try c.encode(mode, forKey: .mode)
+        case let .axTreeResponse(root):
+            try c.encode("axTreeResponse", forKey: .type)
+            try c.encode(root, forKey: .root)
+        case let .axSnapshotResponse(nodes, appContext):
+            try c.encode("axSnapshotResponse", forKey: .type)
+            try c.encode(nodes, forKey: .nodes)
+            try c.encodeIfPresent(appContext, forKey: .appContext)
+        case let .error(code, message, detail):
+            try c.encode("error", forKey: .type)
+            try c.encode(code, forKey: .code)
+            try c.encode(message, forKey: .message)
+            try c.encodeIfPresent(detail, forKey: .detail)
         }
     }
-
-    private struct _FramePayload: Encodable { let type: String; let image: String; let mime: String; let w: Int; let h: Int; let ts: Double }
-    private struct _AxSnapshotPayload: Encodable { let type: String; let nodes: [BridgeProtocol.AXNode]; let ts: Double }
-    private struct _SourceClickedPayload: Encodable { let type: String; let ref: BridgeProtocol.SourceRef; let frame: BridgeProtocol.Frame; let ts: Double }
-    private struct _SimInfoPayload: Encodable { let type: String; let info: BridgeProtocol.SimInfo }
-    private struct _ErrorPayload: Encodable { let type: String; let message: String }
-    private struct _InspectResultPayload: Encodable { let type: String; let requestId: String; let ref: BridgeProtocol.SourceRef? }
 }

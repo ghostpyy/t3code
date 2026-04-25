@@ -1,24 +1,24 @@
 import Foundation
 import Network
 
-actor WSServer {
-    typealias Handler = @Sendable (PaneToBridgeMessage, ClientID) async -> Void
-
-    struct ClientID: Hashable, Sendable {
-        let raw: UUID
-    }
-
+/// Message-agnostic WebSocket transport. Consumers own encoding/decoding and
+/// deal purely in `Data`. Delivers inbound client frames to `onMessage` and
+/// fans outbound `Data` to all clients via `broadcast(data:)`.
+///
+/// Frames are sent as WebSocket text (JSON by convention); if callers need
+/// binary framing they should broadcast bytes that already encode the frame.
+final class WSServer: @unchecked Sendable {
+    private let queue = DispatchQueue(label: "sim-bridge.ws")
     private var listener: NWListener?
-    private var clients: [ClientID: NWConnection] = [:]
-    private var handler: Handler?
+    private var clients: [UUID: NWConnection] = [:]
+    private let clientsLock = NSLock()
     private let port: UInt16
+
+    /// Invoked on the server's internal queue for every inbound client frame.
+    var onMessage: ((Data) -> Void)?
 
     init(port: UInt16) {
         self.port = port
-    }
-
-    func setHandler(_ handler: @escaping Handler) {
-        self.handler = handler
     }
 
     func start() throws {
@@ -32,74 +32,90 @@ actor WSServer {
             throw NSError(domain: "WSServer", code: 1, userInfo: [NSLocalizedDescriptionKey: "Bad port"])
         }
         let listener = try NWListener(using: parameters, on: nwPort)
-        listener.newConnectionHandler = { [weak self] conn in
-            Task { await self?.accept(conn) }
-        }
-        listener.start(queue: DispatchQueue(label: "sim-bridge.ws"))
-        self.listener = listener
-        FileHandle.standardError.write(Data("[sim-bridge] listening on ws://127.0.0.1:\(port)\n".utf8))
-    }
-
-    func broadcast(_ message: BridgeToPaneMessage) async {
-        guard let data = try? message.encode() else { return }
-        for (_, conn) in clients {
-            send(data, on: conn)
-        }
-    }
-
-    func send(_ message: BridgeToPaneMessage, to client: ClientID) async {
-        guard let data = try? message.encode(), let conn = clients[client] else { return }
-        send(data, on: conn)
-    }
-
-    private func accept(_ conn: NWConnection) {
-        let id = ClientID(raw: UUID())
-        clients[id] = conn
-        conn.stateUpdateHandler = { [weak self] state in
+        let logPort = port
+        listener.stateUpdateHandler = { state in
             switch state {
             case .ready:
-                Task { await self?.receive(on: id) }
-            case .failed, .cancelled:
-                Task { await self?.drop(id) }
+                FileHandle.standardError.write(Data("[sim-bridge] listener ready on ws://127.0.0.1:\(logPort)\n".utf8))
+            case .failed(let err):
+                FileHandle.standardError.write(Data("[sim-bridge] listener failed: \(err)\n".utf8))
+                exit(2)
+            case .cancelled:
+                FileHandle.standardError.write(Data("[sim-bridge] listener cancelled\n".utf8))
             default:
                 break
             }
         }
-        conn.start(queue: DispatchQueue(label: "sim-bridge.ws.client"))
+        listener.newConnectionHandler = { [weak self] conn in
+            self?.accept(conn)
+        }
+        listener.start(queue: queue)
+        self.listener = listener
     }
 
-    private func receive(on id: ClientID) {
-        guard let conn = clients[id] else { return }
+    func stop() {
+        listener?.cancel()
+        listener = nil
+        clientsLock.lock()
+        for (_, conn) in clients { conn.cancel() }
+        clients.removeAll()
+        clientsLock.unlock()
+    }
+
+    /// Send one frame to every connected client.
+    func broadcast(data: Data) {
+        clientsLock.lock()
+        let snapshot = Array(clients.values)
+        clientsLock.unlock()
+        for conn in snapshot { send(data, on: conn) }
+    }
+
+    // MARK: - private
+
+    private func accept(_ conn: NWConnection) {
+        let id = UUID()
+        clientsLock.lock()
+        clients[id] = conn
+        clientsLock.unlock()
+        conn.stateUpdateHandler = { [weak self] state in
+            switch state {
+            case .ready:
+                self?.receive(on: id)
+            case .failed, .cancelled:
+                self?.drop(id)
+            default:
+                break
+            }
+        }
+        conn.start(queue: queue)
+    }
+
+    private func receive(on id: UUID) {
+        clientsLock.lock()
+        let conn = clients[id]
+        clientsLock.unlock()
+        guard let conn else { return }
         conn.receiveMessage { [weak self] data, _, _, error in
             guard let self else { return }
             if let data, !data.isEmpty {
-                Task { await self.dispatch(data: data, from: id) }
+                self.onMessage?(data)
             }
             if error != nil {
-                Task { await self.drop(id) }
+                self.drop(id)
             } else {
-                Task { await self.receive(on: id) }
+                self.receive(on: id)
             }
         }
     }
 
-    private func dispatch(data: Data, from id: ClientID) async {
-        guard let handler else { return }
-        do {
-            let msg = try JSONDecoder().decode(PaneToBridgeMessage.self, from: data)
-            await handler(msg, id)
-        } catch {
-            FileHandle.standardError.write(Data("[sim-bridge] decode error: \(error)\n".utf8))
-        }
+    private func drop(_ id: UUID) {
+        clientsLock.lock()
+        let conn = clients.removeValue(forKey: id)
+        clientsLock.unlock()
+        conn?.cancel()
     }
 
-    private func drop(_ id: ClientID) {
-        if let conn = clients.removeValue(forKey: id) {
-            conn.cancel()
-        }
-    }
-
-    private nonisolated func send(_ data: Data, on conn: NWConnection) {
+    private func send(_ data: Data, on conn: NWConnection) {
         let metadata = NWProtocolWebSocket.Metadata(opcode: .text)
         let context = NWConnection.ContentContext(identifier: "send", metadata: [metadata])
         conn.send(content: data, contentContext: context, isComplete: true, completion: .contentProcessed { _ in })
