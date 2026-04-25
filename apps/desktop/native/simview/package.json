@@ -1,0 +1,18 @@
+{
+  "name": "@t3tools/simview",
+  "version": "0.0.1",
+  "private": true,
+  "main": "index.js",
+  "types": "index.d.ts",
+  "scripts": {
+    "build": "npx --yes node-gyp rebuild",
+    "typecheck": "echo 'no typecheck: native addon'",
+    "test": "echo 'no tests: native addon'"
+  },
+  "dependencies": {
+    "node-addon-api": "^8.0.0"
+  },
+  "devDependencies": {
+    "node-gyp": "^10.2.0"
+  }
+}

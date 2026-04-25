@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { DesktopBridge } from "@t3tools/contracts";
+import type { DesktopBridge, SimulatorViewBounds, SimulatorViewMode } from "@t3tools/contracts";
 
 const PICK_FOLDER_CHANNEL = "desktop:pick-folder";
 const CONFIRM_CHANNEL = "desktop:confirm";
@@ -24,6 +24,12 @@ const SET_SAVED_ENVIRONMENT_SECRET_CHANNEL = "desktop:set-saved-environment-secr
 const REMOVE_SAVED_ENVIRONMENT_SECRET_CHANNEL = "desktop:remove-saved-environment-secret";
 const GET_SERVER_EXPOSURE_STATE_CHANNEL = "desktop:get-server-exposure-state";
 const SET_SERVER_EXPOSURE_MODE_CHANNEL = "desktop:set-server-exposure-mode";
+const SIM_BOUNDS_CHANNEL = "sim:bounds-update";
+const SIM_MODE_CHANNEL = "sim:mode";
+const SIM_OUTLINES_CHANNEL = "sim:outlines";
+const SIM_SEND_CHANNEL = "sim:send";
+const SIM_MESSAGE_CHANNEL = "sim:message";
+const SIM_SCREENSHOT_TO_CLIPBOARD_CHANNEL = "sim:screenshot-to-clipboard";
 
 contextBridge.exposeInMainWorld("desktopBridge", {
   getAppBranding: () => {
@@ -84,5 +90,25 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     return () => {
       ipcRenderer.removeListener(UPDATE_STATE_CHANNEL, wrappedListener);
     };
+  },
+  simulator: {
+    setBounds: (rect: SimulatorViewBounds) =>
+      ipcRenderer.invoke(SIM_BOUNDS_CHANNEL, rect) as Promise<void>,
+    setMode: (mode: SimulatorViewMode) =>
+      ipcRenderer.invoke(SIM_MODE_CHANNEL, mode) as Promise<void>,
+    setOutlines: (rects, selectedIndex) =>
+      ipcRenderer.invoke(SIM_OUTLINES_CHANNEL, rects, selectedIndex) as Promise<void>,
+    sendMessage: (msg: unknown) => ipcRenderer.invoke(SIM_SEND_CHANNEL, msg) as Promise<void>,
+    onMessage: (listener: (message: unknown) => void) => {
+      const wrapped = (_event: Electron.IpcRendererEvent, payload: unknown) => {
+        listener(payload);
+      };
+      ipcRenderer.on(SIM_MESSAGE_CHANNEL, wrapped);
+      return () => {
+        ipcRenderer.removeListener(SIM_MESSAGE_CHANNEL, wrapped);
+      };
+    },
+    screenshotToClipboard: (udid: string) =>
+      ipcRenderer.invoke(SIM_SCREENSHOT_TO_CLIPBOARD_CHANNEL, udid) as Promise<boolean>,
   },
 } satisfies DesktopBridge);

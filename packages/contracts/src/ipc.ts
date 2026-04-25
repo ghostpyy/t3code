@@ -146,6 +146,59 @@ export interface PickFolderOptions {
   initialPath?: string | null;
 }
 
+export interface SimulatorViewBounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  /**
+   * Optional: `documentElement.clientWidth` / `clientHeight` from the
+   * renderer at the time of measurement. When present, the native
+   * `T3SimView` maps the cutout rect into `NSView` coordinates
+   * proportionally so the `CALayerHost` lines up with the DOM on every
+   * window layout, title-bar inset, and DPR / zoom configuration.
+   */
+  refWidth?: number;
+  refHeight?: number;
+  /** Inner-socket corner radius (CSS px) for the native layer to clip the
+   *  live screen against — matches the bezel's rounded cutout so the two
+   *  render as one continuous device, like Simulator.app. */
+  cornerRadius?: number;
+  /** UIDeviceOrientation: 1 portrait, 2 portraitUpsideDown, 3 landscapeRight,
+   *  4 landscapeLeft. The renderer CSS-rotates the bezel and publishes the
+   *  rotated AABB as `(x, y, width, height)`; the native side uses this
+   *  field to invert the rotation when projecting pointer events into
+   *  portrait-native pixel coordinates the simulator HID expects. */
+  orientation?: 1 | 2 | 3 | 4;
+}
+
+export type SimulatorViewMode = "input" | "inspect";
+
+export interface SimulatorOutlineRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  /** Corner radius of the highlighted element (display points). Drawn by
+   *  the native layer so the picker outline matches the element's rounded
+   *  shape (squircle buttons, material cards, tab bar pills) instead of
+   *  tracing a blunt rectangle over a pill-shaped control. */
+  cornerRadius?: number;
+}
+
+export interface DesktopSimulatorBridge {
+  setBounds: (rect: SimulatorViewBounds) => Promise<void>;
+  setMode: (mode: SimulatorViewMode) => Promise<void>;
+  setOutlines: (rects: readonly SimulatorOutlineRect[], selectedIndex?: number) => Promise<void>;
+  sendMessage: (msg: unknown) => Promise<void>;
+  onMessage: (listener: (message: unknown) => void) => () => void;
+  /** Run `xcrun simctl io <udid> screenshot --type=png` and copy the resulting
+   *  PNG to the macOS clipboard. Resolves to `true` if the screenshot landed
+   *  on the pasteboard, `false` if simctl failed or returned an empty buffer
+   *  (typical when the device isn't booted). */
+  screenshotToClipboard: (udid: string) => Promise<boolean>;
+}
+
 export interface DesktopBridge {
   getAppBranding: () => DesktopAppBranding | null;
   getLocalEnvironmentBootstrap: () => DesktopEnvironmentBootstrap | null;
@@ -175,6 +228,7 @@ export interface DesktopBridge {
   downloadUpdate: () => Promise<DesktopUpdateActionResult>;
   installUpdate: () => Promise<DesktopUpdateActionResult>;
   onUpdateState: (listener: (state: DesktopUpdateState) => void) => () => void;
+  simulator: DesktopSimulatorBridge;
 }
 
 /**

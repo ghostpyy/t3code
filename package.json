@@ -4,6 +4,7 @@
   "workspaces": {
     "packages": [
       "apps/*",
+      "apps/desktop/native/*",
       "packages/*",
       "scripts"
     ],
@@ -31,6 +32,9 @@
     "dev:web": "node scripts/dev-runner.ts dev:web",
     "dev:marketing": "turbo run dev --filter=@t3tools/marketing",
     "dev:desktop": "node scripts/dev-runner.ts dev:desktop",
+    "sim:build": "cd apps/sim-bridge && swift build -c release",
+    "sim:dev": "cd apps/sim-bridge && swift run sim-bridge --port 17323",
+    "sim:app": "cd apps/sim-bridge && bash scripts/build-app-bundle.sh",
     "start": "turbo run start --filter=t3",
     "start:desktop": "turbo run start --filter=@t3tools/desktop",
     "start:marketing": "turbo run preview --filter=@t3tools/marketing",
@@ -54,7 +58,14 @@
     "dist:desktop:win:arm64": "node scripts/build-desktop-artifact.ts --platform win --target nsis --arch arm64",
     "dist:desktop:win:x64": "node scripts/build-desktop-artifact.ts --platform win --target nsis --arch x64",
     "release:smoke": "node scripts/release-smoke.ts",
-    "clean": "rm -rf node_modules apps/*/node_modules packages/*/node_modules apps/*/dist apps/*/dist-electron packages/*/dist .turbo apps/*/.turbo packages/*/.turbo",
+    "desktop:nuke": "bash scripts/deep-clean.sh --yes",
+    "desktop:install-current": "bash scripts/install-local-dmg.sh --build-current --yes",
+    "desktop:reinstall-current": "bash scripts/deep-clean.sh --yes && bash scripts/install-local-dmg.sh --build-current --yes",
+    "desktop:sync-latest": "bash scripts/install-upstream-source.sh --sync-only",
+    "desktop:install-latest": "bash scripts/install-upstream-source.sh --yes",
+    "desktop:reinstall-latest": "bash scripts/deep-clean.sh --yes && bash scripts/install-upstream-source.sh --yes",
+    "desktop:install-release-latest": "bash scripts/install-local-dmg.sh --latest-release --yes",
+    "clean": "rm -rf node_modules apps/*/node_modules apps/desktop/native/*/node_modules packages/*/node_modules apps/*/dist apps/*/dist-electron apps/desktop/native/*/build packages/*/dist .turbo apps/*/.turbo packages/*/.turbo",
     "sync:vscode-icons": "node scripts/sync-vscode-icons.mjs"
   },
   "devDependencies": {

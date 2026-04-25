@@ -592,6 +592,31 @@ const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       target: target === "dmg" ? [target, "zip"] : [target],
       icon: "icon.icns",
       category: "public.app-category.developer-tools",
+      extraResources: [
+        {
+          from: "apps/sim-bridge/SimBridge.app",
+          to: "SimBridge.app",
+          filter: ["**/*"],
+        },
+        {
+          from: "apps/desktop/native/simview/build/Release/simview.node",
+          to: "simview.node",
+        },
+      ],
+      extendInfo: {
+        // macOS prompts the responsible-party binary when a child process
+        // requests screen capture or accessibility. When T3 Code spawns
+        // SimBridge.app and SimBridge hits a TCC API, macOS can attribute the
+        // prompt either to SimBridge (if LSUIElement + stable signature) or
+        // to T3 Code. Either way, both apps need proper usage descriptions
+        // so the dialog is actionable.
+        NSScreenCaptureUsageDescription:
+          "T3 Code captures the iOS Simulator window so it can be displayed inside the chat workbench.",
+        NSAccessibilityUsageDescription:
+          "T3 Code reads the iOS Simulator's AX hierarchy to map taps back to your SwiftUI source files.",
+        NSAppleEventsUsageDescription:
+          "T3 Code forwards taps, swipes, and hardware button presses to the iOS Simulator.",
+      },
     };
   }
 
@@ -739,6 +764,23 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     );
   }
 
+  const simBridgeAppPath = path.join(repoRoot, "apps/sim-bridge/.build/release/SimBridge.app");
+  if (options.platform === "mac" && !options.skipBuild) {
+    yield* Effect.log("[desktop-artifact] Building sim-bridge (swift) + app bundle...");
+    yield* runCommand(
+      ChildProcess.make({
+        cwd: path.join(repoRoot, "apps/sim-bridge"),
+        ...commandOutputOptions(options.verbose),
+      })`swift build -c release`,
+    );
+    yield* runCommand(
+      ChildProcess.make({
+        cwd: path.join(repoRoot, "apps/sim-bridge"),
+        ...commandOutputOptions(options.verbose),
+      })`bash scripts/build-app-bundle.sh`,
+    );
+  }
+
   for (const [label, dir] of Object.entries(distDirs)) {
     if (!(yield* fs.exists(dir))) {
       return yield* new BuildScriptError({
@@ -762,6 +804,40 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   yield* fs.copy(distDirs.desktopDist, path.join(stageAppDir, "apps/desktop/dist-electron"));
   yield* fs.copy(distDirs.desktopResources, stageResourcesDir);
   yield* fs.copy(distDirs.serverDist, path.join(stageAppDir, "apps/server/dist"));
+
+  if (options.platform === "mac") {
+    const simBridgeExists = yield* fs.exists(simBridgeAppPath);
+    if (simBridgeExists) {
+      yield* Effect.log("[desktop-artifact] Staging SimBridge.app into artifact resources...");
+      yield* fs.makeDirectory(path.join(stageAppDir, "apps/sim-bridge"), { recursive: true });
+      yield* fs.copy(simBridgeAppPath, path.join(stageAppDir, "apps/sim-bridge/SimBridge.app"));
+    } else {
+      yield* Effect.logWarning(
+        `[desktop-artifact] SimBridge.app not found at ${simBridgeAppPath}; installed app will fall back to repo binary at runtime.`,
+      );
+    }
+
+    const simViewAddonPath = path.join(
+      repoRoot,
+      "apps/desktop/native/simview/build/Release/simview.node",
+    );
+    if (yield* fs.exists(simViewAddonPath)) {
+      yield* Effect.log(
+        "[desktop-artifact] Staging SimView native addon into artifact resources...",
+      );
+      yield* fs.makeDirectory(path.join(stageAppDir, "apps/desktop/native/simview/build/Release"), {
+        recursive: true,
+      });
+      yield* fs.copy(
+        simViewAddonPath,
+        path.join(stageAppDir, "apps/desktop/native/simview/build/Release/simview.node"),
+      );
+    } else {
+      yield* Effect.logWarning(
+        `[desktop-artifact] simview.node not found at ${simViewAddonPath}; simulator embed will be disabled in the installed app.`,
+      );
+    }
+  }
 
   yield* assertPlatformBuildResources(
     options.platform,

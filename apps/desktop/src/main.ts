@@ -75,6 +75,8 @@ import {
 } from "./updateMachine.ts";
 import { isArm64HostRunningIntelBuild, resolveDesktopRuntimeInfo } from "./runtimeArch.ts";
 import { resolveDesktopAppBranding } from "./appBranding.ts";
+import { onDaemonMessage, sendToDaemon, startSimBridge, stopSimBridge } from "./simulatorRunner.ts";
+import { registerSimViewIpc, SimViewHost, type SimInputEvent } from "./simView.ts";
 
 syncShellEnvironment();
 
@@ -201,6 +203,13 @@ type LinuxDesktopNamedApp = Electron.App & {
 };
 
 let mainWindow: BrowserWindow | null = null;
+let simViewHost: SimViewHost | null = null;
+let unregisterSimViewIpc: (() => void) | null = null;
+let unsubscribeSimViewDaemon: (() => void) | null = null;
+const SIM_MESSAGE_CHANNEL = "sim:message";
+const SIM_SEND_CHANNEL = "sim:send";
+const SIM_SCREENSHOT_TO_CLIPBOARD_CHANNEL = "sim:screenshot-to-clipboard";
+const SCREENSHOT_TIMEOUT_MS = 8_000;
 let backendProcess: ChildProcess.ChildProcess | null = null;
 let backendPort = 0;
 let backendBindHost = DESKTOP_LOOPBACK_HOST;
@@ -1864,6 +1873,83 @@ function registerIpcHandlers(): void {
       state: updateState,
     } satisfies DesktopUpdateCheckResult;
   });
+
+  ipcMain.handle(SIM_SEND_CHANNEL, (_event, msg: unknown) => {
+    sendToDaemon(msg);
+  });
+
+  ipcMain.removeHandler(SIM_SCREENSHOT_TO_CLIPBOARD_CHANNEL);
+  ipcMain.handle(SIM_SCREENSHOT_TO_CLIPBOARD_CHANNEL, async (_event, udid: unknown) => {
+    if (typeof udid !== "string" || udid.length === 0) return false;
+    return await screenshotSimulatorToClipboard(udid);
+  });
+}
+
+async function screenshotSimulatorToClipboard(udid: string): Promise<boolean> {
+  // simctl streams the PNG to stdout when the path is `-`. Buffer it in
+  // memory and hand it to NSPasteboard via Electron's native image API. Any
+  // non-zero exit (sim not booted, runtime mismatch, udid unknown) resolves
+  // to false so the caller can no-op silently.
+  return await new Promise<boolean>((resolve) => {
+    let settled = false;
+    const settle = (value: boolean): void => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+
+    const child = ChildProcess.spawn(
+      "/usr/bin/xcrun",
+      ["simctl", "io", udid, "screenshot", "-", "--type=png"],
+      { stdio: ["ignore", "pipe", "pipe"] },
+    );
+
+    const stdoutChunks: Buffer[] = [];
+    const stderrChunks: Buffer[] = [];
+    child.stdout.on("data", (chunk: Buffer) => stdoutChunks.push(chunk));
+    child.stderr.on("data", (chunk: Buffer) => stderrChunks.push(chunk));
+
+    const timer = setTimeout(() => {
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        /* already exited */
+      }
+      console.warn(`[sim-screenshot] timed out after ${SCREENSHOT_TIMEOUT_MS}ms`);
+      settle(false);
+    }, SCREENSHOT_TIMEOUT_MS);
+    timer.unref();
+
+    child.on("error", (error) => {
+      clearTimeout(timer);
+      console.warn("[sim-screenshot] spawn error:", error);
+      settle(false);
+    });
+
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      if (code !== 0) {
+        const stderrText = Buffer.concat(stderrChunks).toString("utf8").trim();
+        console.warn(`[sim-screenshot] simctl exited code=${code} stderr=${stderrText}`);
+        settle(false);
+        return;
+      }
+      const buffer = Buffer.concat(stdoutChunks);
+      if (buffer.byteLength === 0) {
+        console.warn("[sim-screenshot] simctl returned empty buffer");
+        settle(false);
+        return;
+      }
+      const image = nativeImage.createFromBuffer(buffer);
+      if (image.isEmpty()) {
+        console.warn("[sim-screenshot] nativeImage decoded empty");
+        settle(false);
+        return;
+      }
+      clipboard.writeImage(image);
+      settle(true);
+    });
+  });
 }
 
 function getIconOption(): { icon: string } | Record<string, never> {
@@ -1917,6 +2003,124 @@ function syncAllWindowAppearance(): void {
 
 nativeTheme.on("updated", syncAllWindowAppearance);
 
+function attachSimViewToWindow(window: BrowserWindow): void {
+  if (process.platform !== "darwin") return;
+
+  // A single SimViewHost lives on the primary window. If an old host exists
+  // (e.g. the previous window was closed on macOS while the app stayed alive),
+  // tear it down before constructing the new one so IPC handlers don't leak.
+  disposeSimView();
+
+  const host = new SimViewHost(window);
+  const releaseIpc = registerSimViewIpc(host);
+
+  const forwardDaemonMessage = (msg: unknown): void => {
+    if (msg && typeof msg === "object") {
+      const typed = msg as {
+        type?: unknown;
+        contextId?: unknown;
+        pixelWidth?: unknown;
+        pixelHeight?: unknown;
+        scale?: unknown;
+      };
+      if (typed.type === "displayReady") {
+        const { contextId, pixelWidth, pixelHeight, scale } = typed;
+        if (
+          typeof pixelWidth === "number" &&
+          Number.isFinite(pixelWidth) &&
+          typeof pixelHeight === "number" &&
+          Number.isFinite(pixelHeight)
+        ) {
+          if (typeof contextId === "number" && Number.isFinite(contextId) && contextId === 0) {
+            host.updateDisplayMetrics(null);
+          } else {
+            host.updateDisplayMetrics({
+              pixelWidth,
+              pixelHeight,
+              scale: typeof scale === "number" && Number.isFinite(scale) ? scale : 1,
+            });
+          }
+        }
+        if (typeof contextId === "number" && Number.isFinite(contextId)) {
+          host.attach(contextId);
+        }
+      } else if (typed.type === "displaySurfaceChanged") {
+        const { pixelWidth, pixelHeight } = typed;
+        if (
+          typeof pixelWidth === "number" &&
+          Number.isFinite(pixelWidth) &&
+          typeof pixelHeight === "number" &&
+          Number.isFinite(pixelHeight)
+        ) {
+          host.updateDisplayMetrics({ pixelWidth, pixelHeight });
+        }
+      }
+    }
+    if (!window.isDestroyed()) {
+      window.webContents.send(SIM_MESSAGE_CHANNEL, msg);
+    }
+  };
+
+  host.onEvent = (ev: SimInputEvent): void => {
+    // Hover-exit is renderer-side state cleanup, not a daemon request. Synthesize
+    // an empty-chain axHitResponse so the reducer drops stale hoveredHit the
+    // moment the pointer leaves the simulator rect. The renderer re-publishes
+    // outlines based on the new state — never touch `host.setOutlines` here,
+    // since that would wipe the pinned selection when the user moves off.
+    if (ev.kind === "ax-hover-exit") {
+      if (!window.isDestroyed()) {
+        window.webContents.send(SIM_MESSAGE_CHANNEL, {
+          type: "axHitResponse",
+          chain: [],
+          hitIndex: 0,
+          mode: "hover",
+        });
+      }
+      return;
+    }
+    const payload = host.mapEvent(ev);
+    if (payload) {
+      if (payload.type === "inputTap" || payload.type === "axHit" || payload.type === "inputKey") {
+        console.info(`[sim-view] -> daemon ${JSON.stringify(payload)}`);
+      }
+      sendToDaemon(payload);
+    } else {
+      console.info(`[sim-view] mapEvent dropped ev=${JSON.stringify(ev)}`);
+    }
+  };
+
+  const releaseDaemon = onDaemonMessage(forwardDaemonMessage);
+
+  simViewHost = host;
+  unregisterSimViewIpc = releaseIpc;
+  unsubscribeSimViewDaemon = releaseDaemon;
+
+  window.once("closed", () => {
+    if (simViewHost === host) disposeSimView();
+  });
+}
+
+function disposeSimView(): void {
+  try {
+    unsubscribeSimViewDaemon?.();
+  } catch {
+    /* noop */
+  }
+  unsubscribeSimViewDaemon = null;
+  try {
+    unregisterSimViewIpc?.();
+  } catch {
+    /* noop */
+  }
+  unregisterSimViewIpc = null;
+  try {
+    simViewHost?.dispose();
+  } catch {
+    /* noop */
+  }
+  simViewHost = null;
+}
+
 function createWindow(): BrowserWindow {
   const window = new BrowserWindow({
     width: 1100,
@@ -1936,6 +2140,8 @@ function createWindow(): BrowserWindow {
       sandbox: true,
     },
   });
+
+  attachSimViewToWindow(window);
 
   window.webContents.on("context-menu", (event, params) => {
     event.preventDefault();
@@ -2078,6 +2284,8 @@ async function bootstrap(): Promise<void> {
   writeDesktopLogHeader("bootstrap ipc handlers registered");
   startBackend();
   writeDesktopLogHeader("bootstrap backend start requested");
+  startSimBridge(ROOT_DIR, process.resourcesPath);
+  writeDesktopLogHeader("bootstrap sim-bridge start requested");
 
   if (isDevelopment) {
     mainWindow = createWindow();
@@ -2108,6 +2316,8 @@ app.on("before-quit", () => {
   clearUpdatePollTimer();
   cancelBackendReadinessWait();
   stopBackend();
+  stopSimBridge();
+  disposeSimView();
   restoreStdIoCapture?.();
 });
 
@@ -2157,6 +2367,7 @@ if (process.platform !== "win32") {
     clearUpdatePollTimer();
     cancelBackendReadinessWait();
     stopBackend();
+    stopSimBridge();
     restoreStdIoCapture?.();
     app.quit();
   });
@@ -2167,6 +2378,7 @@ if (process.platform !== "win32") {
     writeDesktopLogHeader("SIGTERM received");
     clearUpdatePollTimer();
     stopBackend();
+    stopSimBridge();
     restoreStdIoCapture?.();
     app.quit();
   });
