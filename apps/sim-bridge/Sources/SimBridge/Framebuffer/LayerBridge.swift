@@ -195,22 +195,32 @@ public final class LayerBridge {
         contextId = 0
     }
 
-    /// UIDeviceOrientation → CoreAnimation Z-axis rotation. Conventions:
-    /// the IOSurface always arrives in native portrait pixels (Dynamic
-    /// Island top, home indicator bottom), so we rotate the *surface
-    /// layer* to land its content inside the swapped landscape extent.
+    /// UIDeviceOrientation → CoreAnimation Z-axis rotation.
+    ///
+    /// Conventions:
+    ///  - The IOSurface arrives in native portrait pixels (Dynamic Island at
+    ///    portrait TOP, home indicator at portrait BOTTOM). The simulator does
+    ///    NOT rotate the buffer when the device rotates — it keeps publishing
+    ///    portrait pixels and expects the host to rotate them.
+    ///  - `surface.isGeometryFlipped = true` flips the layer's local Y axis,
+    ///    so a positive Z rotation is CW *visually* (not CCW as in standard
+    ///    math). The signs below are the visual/CW direction the surface must
+    ///    rotate so its portrait TOP edge lands at the user-perceived TOP of
+    ///    the rotated extent.
+    ///
+    /// Mapping (UIInterfaceOrientation semantics — what the renderer's CSS
+    /// uses for its bezel rotate(): orientation 3 = landscapeRight = status
+    /// bar on screen RIGHT, orientation 4 = landscapeLeft = status bar on
+    /// screen LEFT):
     ///   1 portrait                →  0
     ///   2 portraitUpsideDown      →  π
-    ///   3 landscapeRight          → -π/2  (status bar on right edge)
-    ///   4 landscapeLeft           → +π/2  (status bar on left edge)
-    /// Signs match `+[UIView transform]` for `UIInterfaceOrientation` —
-    /// see `UIApplication`'s status-bar rotation source — so a renderer
-    /// that CSS-rotates its bezel by the same convention stays in sync.
+    ///   3 landscapeRight          → +π/2  (CW visually: TOP → RIGHT)
+    ///   4 landscapeLeft           → -π/2  (CCW visually: TOP → LEFT)
     private static func rotationRadians(for orientation: Int) -> CGFloat {
         switch orientation {
         case 2: return .pi
-        case 3: return -.pi / 2
-        case 4: return .pi / 2
+        case 3: return .pi / 2
+        case 4: return -.pi / 2
         default: return 0
         }
     }

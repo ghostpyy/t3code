@@ -210,12 +210,7 @@ final class Coordinator {
                     self.currentInfo = info
                     self.layerBridge.update(surface: surface, info: info, orientation: self.currentOrientation)
                     FileHandle.standardError.write(Data("[display] surface contextId=\(self.layerBridge.contextId) px=\(info.pixelWidth)x\(info.pixelHeight) scale=\(info.scale) orientation=\(self.currentOrientation)\n".utf8))
-                    self.send(.displayReady(
-                        contextId: self.layerBridge.contextId,
-                        pixelWidth: info.pixelWidth,
-                        pixelHeight: info.pixelHeight,
-                        scale: Double(info.scale)
-                    ))
+                    self.emitDisplayReady(info: info)
                 }
             },
             onDamage: { [weak self] in
@@ -224,6 +219,28 @@ final class Coordinator {
         )
         wireAuxiliaryServices(simDevice: simDevice)
         FileHandle.standardError.write(Data("[display] wireDisplay attached\n".utf8))
+    }
+
+    /// Publish the displayed pixel dims to the renderer/native. The values
+    /// must match `LayerBridge.applyGeometry`'s rootLayer extent — landscape
+    /// for orientations 3/4, portrait for 1/2 — otherwise the native
+    /// CALayerHost.bounds (taken from this payload) won't match the imported
+    /// rootLayer.bounds and the content renders distorted or rotationally
+    /// misaligned. The simulator framebuffer is always portrait pixels at
+    /// the source, so we swap dims based on the active UIInterfaceOrientation
+    /// rather than trusting `info.pixelWidth/Height`'s native order.
+    private func emitDisplayReady(info: Display.Info) {
+        let isLandscape = currentOrientation == 3 || currentOrientation == 4
+        let longEdge = max(info.pixelWidth, info.pixelHeight)
+        let shortEdge = min(info.pixelWidth, info.pixelHeight)
+        let outW = isLandscape ? longEdge : shortEdge
+        let outH = isLandscape ? shortEdge : longEdge
+        send(.displayReady(
+            contextId: layerBridge.contextId,
+            pixelWidth: outW,
+            pixelHeight: outH,
+            scale: Double(info.scale)
+        ))
     }
 
     private func wireAuxiliaryServices(simDevice: SimDevice) {
@@ -360,6 +377,11 @@ final class Coordinator {
         // animates the in-app rotation.
         if let info = currentInfo {
             layerBridge.setOrientation(clamped, info: info)
+            // Republish dims so native CALayerHost.bounds tracks the new
+            // orientation. Without this, native keeps the previous-orientation
+            // dims and the imported rootLayer (now landscape) renders against
+            // a portrait host extent, distorting the content.
+            emitDisplayReady(info: info)
         }
         let value = UInt32(clamped)
         DispatchQueue.global(qos: .userInitiated).async {
@@ -456,7 +478,12 @@ final class Coordinator {
                 hinted = normalized
             }
             let decorated = hinted.map { Self.withAppContext($0, appContext: appContext) }
-            let hitIndex = usedPlugin ? 0 : Self.preferredHitIndex(in: hinted)
+            // Pure-geometry leaf pick: the element with the smallest non-stub
+            // frame is what the human visually clicked on. Wrappers and stage
+            // roots have larger areas and lose by definition. The plugin path
+            // already returns the chain smallest-first (Satira's hit-test sorts
+            // by area+z), so smallestUsableHit returns 0 there for free.
+            let hitIndex = Self.smallestUsableHit(in: hinted)
 
             let tDone = CFAbsoluteTimeGetCurrent()
             let msApp = Int((tApp - t0) * 1000)
@@ -623,57 +650,33 @@ final class Coordinator {
         return [leaf] + chain.dropFirst()
     }
 
-    nonisolated private static func preferredHitIndex(in chain: [AXElement]) -> Int {
+    /// Smallest-area-first hit pick. The element with the smallest usable
+    /// frame is the one the human's finger actually landed on; wrappers and
+    /// stage roots have larger frames and cannot be the visual target.
+    /// Identical algorithm to Satira-side `InspectableHitTest` so both code
+    /// paths converge on the same answer.
+    ///
+    /// Falls back to the chain's leading element only when every entry is a
+    /// 1×1 coordinate stub (the synthetic-hit-point degenerate case) — the
+    /// chain is "as good as it gets" and there's nothing smaller to pick.
+    nonisolated private static func smallestUsableHit(in chain: [AXElement]) -> Int {
         guard !chain.isEmpty else { return 0 }
-        let rootFrame = chain.last?.frame
         var bestIndex = 0
-        var bestScore = -Double.greatestFiniteMagnitude
+        var bestArea = Double.greatestFiniteMagnitude
         for (index, element) in chain.enumerated() {
-            let score = preferredHitScore(element, index: index, rootFrame: rootFrame)
-            if score > bestScore {
-                bestScore = score
+            let frame = element.frame
+            let width = max(0, frame.width)
+            let height = max(0, frame.height)
+            // Skip degenerate frames (zero, negative, or 1×1 stubs) — they
+            // would always "win" by area but represent no visible target.
+            guard width > 1, height > 1 else { continue }
+            let area = width * height
+            if area < bestArea {
+                bestArea = area
                 bestIndex = index
             }
         }
         return bestIndex
-    }
-
-    nonisolated private static func preferredHitScore(
-        _ element: AXElement,
-        index: Int,
-        rootFrame: AXFrame?
-    ) -> Double {
-        let semanticCount = semanticTexts(for: element).count
-        let area = max(0, element.frame.width) * max(0, element.frame.height)
-        var score = 0.0
-
-        if semanticCount > 0 {
-            score += 52 + Double(max(0, semanticCount - 1)) * 14
-        }
-        if hasUsableFrame(element.frame) {
-            score += 24 + min(18, log1p(area) / 1.55)
-        } else {
-            score -= 42
-        }
-        if isInspectableIdentifier(element.identifier) {
-            score += 36
-        }
-        if element.sourceHints?.isEmpty == false {
-            score += 14
-        }
-        if isCoordinateStub(element.frame) {
-            score -= 120
-        }
-        if isGenericRole(element.role) {
-            score -= 26
-        } else if isContainerRole(element.role) {
-            score -= 10
-        }
-        if looksLikeScreenRoot(element.frame, rootFrame: rootFrame) {
-            score -= 32
-        }
-
-        return score - Double(index) * 2.5
     }
 
     nonisolated private static func frameFitScore(_ frame: AXFrame, display: AXFrame) -> Double {
@@ -727,44 +730,8 @@ final class Coordinator {
             frame.y + max(frame.height, 0) >= minY
     }
 
-    nonisolated private static func semanticTexts(for element: AXElement) -> [String] {
-        var seen = Set<String>()
-        var values: [String] = []
-        for raw in [element.label, element.value] {
-            guard let normalized = normalizeSemanticText(raw), seen.insert(normalized).inserted else {
-                continue
-            }
-            values.append(normalized)
-        }
-        return values
-    }
-
-    nonisolated private static func normalizeSemanticText(_ value: String?) -> String? {
-        guard let value else { return nil }
-        let collapsed = value
-            .replacingOccurrences(of: "\n", with: " ")
-            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard collapsed.count >= 2, collapsed.rangeOfCharacter(from: .letters) != nil else {
-            return nil
-        }
-        let lowercased = collapsed.lowercased()
-        let rejected = ["axuielement", "element", "view", "group", "button", "image", "text"]
-        return rejected.contains(lowercased) ? nil : collapsed
-    }
-
-    nonisolated private static func isInspectableIdentifier(_ identifier: String?) -> Bool {
-        guard let identifier else { return false }
-        let location = identifier.split(separator: "|", maxSplits: 1).first.map(String.init) ?? identifier
-        return location.range(of: #".*\.swift:\d+$"#, options: .regularExpression) != nil
-    }
-
     nonisolated private static func hasUsableFrame(_ frame: AXFrame) -> Bool {
         frame.width > 2 && frame.height > 2
-    }
-
-    nonisolated private static func isCoordinateStub(_ frame: AXFrame) -> Bool {
-        frame.width <= 1 && frame.height <= 1
     }
 
     /// On Xcode 26.2 the remote AX runtime returns translation objects with
@@ -897,24 +864,6 @@ final class Coordinator {
             value == "application" ||
             value == "window" ||
             value == "unknown"
-    }
-
-    nonisolated private static func isContainerRole(_ role: String) -> Bool {
-        let value = role.lowercased()
-        return value.contains("group") ||
-            value.contains("scroll") ||
-            value.contains("list") ||
-            value.contains("table") ||
-            value.contains("collection")
-    }
-
-    nonisolated private static func looksLikeScreenRoot(_ frame: AXFrame, rootFrame: AXFrame?) -> Bool {
-        guard let rootFrame else { return false }
-        let width = max(rootFrame.width, 1)
-        let height = max(rootFrame.height, 1)
-        let widthRatio = abs(frame.width - rootFrame.width) / width
-        let heightRatio = abs(frame.height - rootFrame.height) / height
-        return widthRatio < 0.03 && heightRatio < 0.03
     }
 
     private func emitSnapshot() {
