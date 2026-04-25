@@ -394,6 +394,19 @@ export function SimPane({
         return;
       }
       if (!inspectOn) return;
+      // Two-stage Escape: first press drops the pin so the picker becomes
+      // ambient-hover again; second press (no pin to clear) leaves inspect
+      // mode entirely. Mirrors how Apple's own picker dismisses selection
+      // before tearing down its overlay.
+      if (event.key === "Escape") {
+        event.preventDefault();
+        if (selected) {
+          clearSelection();
+        } else {
+          setInspectOn(false);
+        }
+        return;
+      }
       if (mod && event.key === "Enter") {
         if (!selected) return;
         event.preventDefault();
@@ -409,7 +422,7 @@ export function SimPane({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [copySelectedToClipboard, inspectOn, selected, syncSelectedToChat]);
+  }, [clearSelection, copySelectedToClipboard, inspectOn, selected, syncSelectedToChat]);
 
   const handleHome = useCallback(() => tapButton("home"), [tapButton]);
   // Cycle UIDeviceOrientation values: portrait → landscapeLeft → upside-down →
@@ -455,9 +468,6 @@ export function SimPane({
         inspectOn={inspectOn}
         onToggleInspect={() => setInspectOn((value) => !value)}
         bootStatus={bootStatus}
-        pixelWidth={displayPixel?.width ?? null}
-        pixelHeight={displayPixel?.height ?? null}
-        scale={displayScale ?? null}
         onHome={handleHome}
         onScreenshot={handleScreenshot}
         onRotate={handleRotate}

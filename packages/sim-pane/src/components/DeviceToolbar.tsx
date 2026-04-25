@@ -23,9 +23,6 @@ export interface DeviceToolbarProps {
   inspectOn: boolean;
   onToggleInspect: () => void;
   bootStatus: string | null;
-  pixelWidth: number | null;
-  pixelHeight: number | null;
-  scale: number | null;
   onHome: () => void;
   onScreenshot: () => void;
   onRotate: () => void;
@@ -35,25 +32,29 @@ export interface DeviceToolbarProps {
   onMenuOpenChange?: (open: boolean) => void;
 }
 
-interface StateLabel {
+interface StateAppearance {
   dot: string;
-  label: string;
   pulsing: boolean;
+  tooltip: string;
 }
 
-function stateAppearance(state: DeviceState, bootStatus: string | null): StateLabel {
+function stateAppearance(state: DeviceState, bootStatus: string | null): StateAppearance {
   switch (state) {
     case "booted":
-      return { dot: tokens.color.accentLive, label: "Live", pulsing: true };
+      return { dot: tokens.color.accentLive, pulsing: true, tooltip: "Live" };
     case "booting":
     case "creating":
-      return { dot: tokens.color.accentBoot, label: bootStatus ?? "Booting", pulsing: true };
+      return {
+        dot: tokens.color.accentBoot,
+        pulsing: true,
+        tooltip: bootStatus ?? "Booting",
+      };
     case "shuttingDown":
-      return { dot: tokens.color.accentBoot, label: "Stopping", pulsing: true };
+      return { dot: tokens.color.accentBoot, pulsing: true, tooltip: "Stopping" };
     case "shutdown":
-      return { dot: tokens.color.textFaint, label: "Idle", pulsing: false };
+      return { dot: tokens.color.textFaint, pulsing: false, tooltip: "Idle" };
     default:
-      return { dot: tokens.color.textFaint, label: "No device", pulsing: false };
+      return { dot: tokens.color.textFaint, pulsing: false, tooltip: "No device" };
   }
 }
 
@@ -63,7 +64,7 @@ function stateAppearance(state: DeviceState, bootStatus: string | null): StateLa
  * the phone is the hero.
  *
  *   ╭──────────────────────────────────────────────────────────╮
- *   │ ● Live  iPhone 17 Pro  26.2  1206×2622  ⌂ 📷 ↻  ◎  ▶   │
+ *   │ ●  iPhone 17 Pro  26.2     ⌂ 📷 ↻  ◎  ▶                │
  *   ╰──────────────────────────────────────────────────────────╯
  */
 export function DeviceToolbar(props: DeviceToolbarProps): ReactElement {
@@ -77,9 +78,6 @@ export function DeviceToolbar(props: DeviceToolbarProps): ReactElement {
     inspectOn,
     onToggleInspect,
     bootStatus,
-    pixelWidth,
-    pixelHeight,
-    scale,
     onHome,
     onScreenshot,
     onRotate,
@@ -92,7 +90,7 @@ export function DeviceToolbar(props: DeviceToolbarProps): ReactElement {
   );
   const running = state === "booted";
   const transitioning = state === "booting" || state === "shuttingDown";
-  const { dot, label, pulsing } = stateAppearance(state, bootStatus);
+  const { dot, pulsing, tooltip } = stateAppearance(state, bootStatus);
 
   const hostRef = useRef<HTMLDivElement | null>(null);
   const [hostWidth, setHostWidth] = useState<number>(Infinity);
@@ -110,13 +108,9 @@ export function DeviceToolbar(props: DeviceToolbarProps): ReactElement {
     };
   }, []);
 
-  const showResolution = hostWidth >= 640;
   const showRuntime = hostWidth >= 500;
   const showHardware = hostWidth >= 380;
   const compact = hostWidth < 440;
-
-  const resolution =
-    pixelWidth && pixelHeight ? `${Math.round(pixelWidth)}×${Math.round(pixelHeight)}` : null;
 
   return (
     <div
@@ -135,7 +129,7 @@ export function DeviceToolbar(props: DeviceToolbarProps): ReactElement {
           display: "flex",
           alignItems: "center",
           gap: 10,
-          padding: "5px 6px 5px 10px",
+          padding: "5px 6px 5px 12px",
           borderRadius: 999,
           border: `1px solid ${tokens.color.hairlineStrong}`,
           background: "linear-gradient(180deg, rgba(20,22,26,0.88), rgba(12,14,18,0.92))",
@@ -144,7 +138,7 @@ export function DeviceToolbar(props: DeviceToolbarProps): ReactElement {
           backdropFilter: "blur(20px)",
         }}
       >
-        <StatusChip dot={dot} label={label} pulsing={pulsing} />
+        <LiveDot color={dot} pulsing={pulsing} title={tooltip} />
         <DevicePicker
           devices={devices}
           selected={selected}
@@ -154,12 +148,6 @@ export function DeviceToolbar(props: DeviceToolbarProps): ReactElement {
           onOpenChange={onMenuOpenChange}
         />
         {showRuntime && selected?.runtime ? <MetaTag>{selected.runtime}</MetaTag> : null}
-        {showResolution && resolution ? (
-          <MetaTag>
-            {resolution}
-            {scale ? <span style={{ color: tokens.color.textFaint }}> · @{scale}x</span> : null}
-          </MetaTag>
-        ) : null}
 
         <Spacer />
 
@@ -191,39 +179,6 @@ function Spacer(): ReactElement {
   return <div style={{ flex: 1, minWidth: 0 }} />;
 }
 
-function StatusChip({
-  dot,
-  label,
-  pulsing,
-}: {
-  dot: string;
-  label: string;
-  pulsing: boolean;
-}): ReactElement {
-  return (
-    <span
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 6,
-        padding: "3px 10px 3px 7px",
-        borderRadius: 999,
-        border: `1px solid ${tokens.color.hairline}`,
-        background: "rgba(255,255,255,0.025)",
-        fontFamily: tokens.font.mono,
-        fontSize: 10.5,
-        letterSpacing: "0.04em",
-        color: tokens.color.text,
-        whiteSpace: "nowrap",
-        flex: "0 0 auto",
-      }}
-    >
-      <LiveDot color={dot} pulsing={pulsing} />
-      {label}
-    </span>
-  );
-}
-
 function MetaTag({ children }: { children: ReactNode }): ReactElement {
   return (
     <span
@@ -246,17 +201,28 @@ function MetaTag({ children }: { children: ReactNode }): ReactElement {
   );
 }
 
-function LiveDot({ color, pulsing }: { color: string; pulsing: boolean }): ReactElement {
+function LiveDot({
+  color,
+  pulsing,
+  title,
+}: {
+  color: string;
+  pulsing: boolean;
+  title?: string;
+}): ReactElement {
   return (
     <span
-      aria-hidden
+      role="status"
+      aria-label={title}
+      title={title}
       style={{
-        width: 7,
-        height: 7,
+        width: 8,
+        height: 8,
         borderRadius: "50%",
         background: color,
         boxShadow: pulsing ? `0 0 10px ${color}` : "none",
         animation: pulsing ? "t3sim-live-pulse 1.8s ease-in-out infinite" : "none",
+        flex: "0 0 auto",
       }}
     />
   );

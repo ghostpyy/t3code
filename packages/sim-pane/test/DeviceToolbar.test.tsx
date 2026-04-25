@@ -17,9 +17,9 @@ function makeProps(overrides: Partial<DeviceToolbarProps> = {}): DeviceToolbarPr
     inspectOn: false,
     onToggleInspect: () => {},
     bootStatus: null,
-    pixelWidth: null,
-    pixelHeight: null,
-    scale: null,
+    onHome: () => {},
+    onScreenshot: () => {},
+    onRotate: () => {},
     ...overrides,
   };
 }
