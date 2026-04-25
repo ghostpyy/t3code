@@ -7,7 +7,8 @@ if [[ "${OSTYPE:-}" != darwin* ]]; then
   exit 1
 fi
 
-RELEASE_REPO="${T3CODE_RELEASE_REPO:-pingdotgg/t3code}"
+RELEASE_REPO="${T3CODE_RELEASE_REPO:-ghostpyy/t3code}"
+UPDATE_REPO="${T3CODE_DESKTOP_UPDATE_REPOSITORY:-ghostpyy/t3code}"
 INSTALL_DIR="${T3CODE_INSTALL_DIR:-/Applications}"
 DOWNLOAD_DIR="${T3CODE_DOWNLOAD_DIR:-$HOME/Downloads/t3code-installer}"
 REPO_ROOT="${T3CODE_REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
@@ -68,7 +69,9 @@ Options:
   --help               Show this help text.
 
 Environment overrides:
-  T3CODE_RELEASE_REPO
+  T3CODE_RELEASE_REPO              GitHub repo for --latest-release. Default: $RELEASE_REPO
+  T3CODE_DESKTOP_UPDATE_REPOSITORY GitHub repo baked into app-update.yml for --build-current.
+                                   Default: $UPDATE_REPO
   T3CODE_INSTALL_DIR
   T3CODE_DOWNLOAD_DIR
   T3CODE_REPO_ROOT
@@ -120,9 +123,16 @@ build_current_dmg() {
 
   mkdir -p "$build_output_dir"
 
-  say "Building current checkout at $REPO_ROOT (arch=$arch_suffix)"
+  say "Building current checkout at $REPO_ROOT (arch=$arch_suffix, update-repo=$UPDATE_REPO)"
   (
     cd "$REPO_ROOT"
+    # Bake an app-update.yml pointing at $UPDATE_REPO into the staged build so
+    # the running app's autoUpdater has a real GitHub feed and the
+    # "Check for Updates..." menu becomes functional. Without this env,
+    # build-desktop-artifact.ts's resolveGitHubPublishConfig returns undefined,
+    # electron-builder bakes no app-update.yml, readAppUpdateYml() returns null,
+    # shouldEnableAutoUpdates() returns false, and the menu silently no-ops.
+    export T3CODE_DESKTOP_UPDATE_REPOSITORY="$UPDATE_REPO"
     if [[ "$SKIP_LOCAL_BUILD" -eq 1 ]]; then
       node scripts/build-desktop-artifact.ts --platform mac --target dmg --arch "$arch_suffix" --output-dir "$build_output_dir" --skip-build
     else

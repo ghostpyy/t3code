@@ -75,11 +75,18 @@ jobs:
         if: steps.merge.outputs.result == 'clean'
         run: git push origin main
 
-      - name: Trigger release build
+      - name: Trigger fork release build
+        # The default GITHUB_TOKEN cannot fire downstream `push` workflows
+        # (security: prevents recursive workflow chains), so the push to main
+        # above does NOT auto-trigger fork-release.yml. Dispatching it via the
+        # gh CLI does fire it, even with the default token. We target
+        # fork-release.yml — NOT upstream's release.yml — because release.yml
+        # uses blacksmith self-hosted runners that the fork can't access (its
+        # scheduled runs queue indefinitely).
         if: steps.merge.outputs.result == 'clean'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh workflow run release.yml --ref main
+        run: gh workflow run fork-release.yml --ref main
 
       - name: Open conflict issue
         if: steps.merge.outputs.result == 'conflict'

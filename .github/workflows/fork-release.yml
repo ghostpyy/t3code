@@ -1,0 +1,136 @@
+name: Fork release
+
+# Fork-only release pipeline. The upstream `release.yml` targets blacksmith
+# self-hosted runners (`blacksmith-12vcpu-macos-26`, …) that the fork has no
+# access to, so its scheduled runs queue forever. This workflow uses
+# github-hosted runners and builds an unsigned macOS arm64 DMG, computes the
+# next `v0.1.X` fork-stable version (always > any upstream `v0.0.X`), and
+# publishes it to ghostpyy/t3code releases. The running app's
+# "Check for Updates..." menu then has a real feed to query.
+#
+# Trigger sources:
+#   * push to main — every commit (including upstream merges from
+#     `sync-upstream.yml`) produces a release.
+#   * workflow_dispatch — manual run for the bootstrap release.
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+      - ".github/ISSUE_TEMPLATE/**"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fork-release
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build and publish fork release
+    if: github.repository == 'ghostpyy/t3code'
+    runs-on: macos-14
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: package.json
+
+      - id: version
+        name: Compute next fork release version
+        shell: bash
+        run: |
+          # Fork release scheme: v0.1.X. Strictly greater than any upstream
+          # v0.0.X release, never collides with upstream tags. X starts at 0
+          # and increments per release. Race-safe under concurrency:fork-release
+          # because GitHub serialises within the group.
+          set -euo pipefail
+          git fetch --tags --force --quiet origin
+          last_tag=$(git tag --list 'v0.1.*' --sort=-version:refname | head -n 1)
+          if [[ -z "$last_tag" ]]; then
+            next_version="0.1.0"
+          else
+            last_version="${last_tag#v}"
+            IFS='.' read -r major minor patch <<< "$last_version"
+            next_version="$major.$minor.$((patch + 1))"
+          fi
+          echo "Next fork version: $next_version"
+          echo "version=$next_version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$next_version" >> "$GITHUB_OUTPUT"
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Align package versions to fork version
+        run: node scripts/update-release-package-versions.ts "${{ steps.version.outputs.version }}"
+
+      - name: Build desktop artifact
+        env:
+          # Bakes app-update.yml pointing at the fork into the artifact so the
+          # released app's autoUpdater queries ghostpyy/t3code's releases (not
+          # upstream's). Without this, resolveGitHubPublishConfig returns
+          # undefined → no app-update.yml → "Check for Updates..." dead.
+          T3CODE_DESKTOP_UPDATE_REPOSITORY: ghostpyy/t3code
+        run: |
+          bun run dist:desktop:artifact -- \
+            --platform mac \
+            --target dmg \
+            --arch arm64 \
+            --build-version "${{ steps.version.outputs.version }}" \
+            --verbose
+
+      - name: Collect release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-publish
+          shopt -s nullglob
+          for pattern in \
+            "release/*.dmg" \
+            "release/*.zip" \
+            "release/*.yml" \
+            "release/*.blockmap"; do
+            for file in $pattern; do
+              cp "$file" release-publish/
+            done
+          done
+          # Sanity: latest-mac.yml is what autoUpdater fetches; its absence
+          # means the build skipped publish-channel manifest generation.
+          if ! ls release-publish/latest-mac.yml >/dev/null 2>&1; then
+            echo "::error::latest-mac.yml not produced; autoUpdater would have nothing to fetch."
+            ls -la release-publish/ || true
+            exit 1
+          fi
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: T3 Code (Fork) ${{ steps.version.outputs.version }}
+          generate_release_notes: true
+          prerelease: false
+          make_latest: true
+          files: |
+            release-publish/*.dmg
+            release-publish/*.zip
+            release-publish/*.yml
+            release-publish/*.blockmap
+          fail_on_unmatched_files: true
+          token: ${{ secrets.GITHUB_TOKEN }}
