@@ -564,6 +564,52 @@ function SidebarRail({
     };
   }, []);
 
+  // Failsafe: when the drag travels over a native overlay (e.g. the Satira
+  // simulator CALayerHost composited above WebContents), macOS swallows the
+  // pointerup before any DOM handler sees it, leaving the cursor frozen in
+  // col-resize and the rail stuck in an active drag. These window-level
+  // listeners run in capture phase so they win against any propagation
+  // oddities, and covers blur/visibility-change in case the release happens
+  // while focus is elsewhere.
+  React.useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const releaseActiveResize = (pointerId?: number): void => {
+      const resizeState = resizeStateRef.current;
+      if (!resizeState) return;
+      if (pointerId !== undefined && resizeState.pointerId !== pointerId) return;
+      suppressClickRef.current = resizeState.moved;
+      stopResize(resizeState.pointerId);
+    };
+
+    const onWindowPointerUp = (event: PointerEvent): void => {
+      releaseActiveResize(event.pointerId);
+    };
+    const onWindowMouseUp = (): void => {
+      releaseActiveResize();
+    };
+    const onWindowBlur = (): void => {
+      releaseActiveResize();
+    };
+    const onVisibilityChange = (): void => {
+      if (document.visibilityState === "hidden") releaseActiveResize();
+    };
+
+    window.addEventListener("pointerup", onWindowPointerUp, { capture: true });
+    window.addEventListener("pointercancel", onWindowPointerUp, { capture: true });
+    window.addEventListener("mouseup", onWindowMouseUp, { capture: true });
+    window.addEventListener("blur", onWindowBlur);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+
+    return () => {
+      window.removeEventListener("pointerup", onWindowPointerUp, { capture: true });
+      window.removeEventListener("pointercancel", onWindowPointerUp, { capture: true });
+      window.removeEventListener("mouseup", onWindowMouseUp, { capture: true });
+      window.removeEventListener("blur", onWindowBlur);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [stopResize]);
+
   return (
     <button
       aria-label={railLabel}

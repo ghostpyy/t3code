@@ -24,7 +24,14 @@ export const EDITORS = [
     launchStyle: "goto",
   },
   { id: "vscodium", label: "VSCodium", commands: ["codium"], launchStyle: "goto" },
-  { id: "zed", label: "Zed", commands: ["zed", "zeditor"], launchStyle: "direct-path" },
+  {
+    id: "zed",
+    label: "Zed",
+    // Zed ships its CLI inside the macOS app bundle; fall back to the bundle
+    // path so detection succeeds even when `Install CLI` was never run.
+    commands: ["zed", "zeditor", "/Applications/Zed.app/Contents/MacOS/cli"],
+    launchStyle: "direct-path",
+  },
   { id: "antigravity", label: "Antigravity", commands: ["agy"], launchStyle: "goto" },
   { id: "idea", label: "IntelliJ IDEA", commands: ["idea"], launchStyle: "line-column" },
   { id: "file-manager", label: "File Manager", commands: null, launchStyle: "direct-path" },

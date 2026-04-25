@@ -39,6 +39,7 @@ import { readEnvironmentApi } from "../environmentApi";
 import { isElectron } from "../env";
 import { readLocalApi } from "../localApi";
 import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
+import { dispatchSimPaneToggle } from "~/lib/simPaneEvents";
 import {
   collapseExpandedComposerCursor,
   parseStandaloneComposerSlashCommand,
@@ -1480,6 +1481,9 @@ export default function ChatView(props: ChatViewProps) {
     }
     if (!diffOpen) {
       onDiffPanelOpen?.();
+      // Diff and the sim pane share the right edge; opening one closes the
+      // other so they never fight for width.
+      dispatchSimPaneToggle(false);
     }
     void navigate({
       to: "/$environmentId/$threadId",

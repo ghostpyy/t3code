@@ -16,6 +16,7 @@ import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
 } from "@t3tools/contracts";
+import { SIM_INSPECT_MARKER_END, SIM_INSPECT_MARKER_START } from "@t3tools/sim-pane";
 import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
 import {
   forwardRef,
@@ -79,6 +80,10 @@ import { ContextWindowMeter } from "./ContextWindowMeter";
 import { buildExpandedImagePreview, type ExpandedImagePreview } from "./ExpandedImagePreview";
 import { basenameOfPath } from "../../vscode-icons";
 import { cn, randomUUID } from "~/lib/utils";
+import {
+  SIM_PANE_SOURCE_REFERENCE_EVENT,
+  type SimPaneSourceReferenceEventDetail,
+} from "~/lib/simPaneEvents";
 import { Separator } from "../ui/separator";
 import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
@@ -158,6 +163,20 @@ const terminalContextIdListsEqual = (
   ids: ReadonlyArray<string>,
 ): boolean =>
   contexts.length === ids.length && contexts.every((context, index) => context.id === ids[index]);
+
+const replaceLatestSimInspectBlock = (text: string, markdown: string): string | null => {
+  const start = text.lastIndexOf(SIM_INSPECT_MARKER_START);
+  if (start === -1) return null;
+  const endMarkerIndex = text.indexOf(SIM_INSPECT_MARKER_END, start);
+  if (endMarkerIndex === -1) return null;
+  const end = endMarkerIndex + SIM_INSPECT_MARKER_END.length;
+  const prefix = text.slice(0, start).replace(/\n{0,2}$/, "");
+  const suffix = text.slice(end).replace(/^\n{0,2}/, "");
+  if (prefix.length === 0 && suffix.length === 0) return markdown;
+  if (prefix.length === 0) return `${markdown}\n\n${suffix}`;
+  if (suffix.length === 0) return `${prefix}\n\n${markdown}`;
+  return `${prefix}\n\n${markdown}\n\n${suffix}`;
+};
 
 const ComposerFooterModeControls = memo(function ComposerFooterModeControls(props: {
   showInteractionModeToggle: boolean;
@@ -1093,33 +1112,48 @@ export const ChatComposer = memo(
     }, [draftId, activeThreadId, promptRef]);
 
     // ------------------------------------------------------------------
-    // SimPane: inject @here file:line when a source reference is clicked
+    // SimPane: inject @here mention markdown when the pane emits a
+    // source-reference event (Send-to-chat / Copy in the inspector panel).
+    //
+    // The pane now pre-renders the full markdown block via
+    // renderMentionMarkdown(); the composer just inserts it at the caret
+    // (or appends to the end) and adds trailing whitespace so the user can
+    // keep typing.
     // ------------------------------------------------------------------
     useEffect(() => {
       function handleSimPaneRef(event: Event): void {
-        const detail = (
-          event as CustomEvent<{
-            ref?: { file: string; line: number; name?: string };
-            label?: string;
-          }>
-        ).detail;
-        if (!detail?.ref) return;
-        const label = detail.label ?? `${detail.ref.file}:${detail.ref.line}`;
+        const detail = (event as CustomEvent<SimPaneSourceReferenceEventDetail>).detail;
+        const markdown = detail?.markdown;
+        if (!markdown || typeof markdown !== "string") return;
         const snapshot = composerEditorRef.current?.readSnapshot();
         const current = snapshot?.value ?? promptRef.current;
         const cursor = snapshot?.expandedCursor ?? current.length;
-        const insert = `@here ${label} `;
-        const nextPrompt = current.slice(0, cursor) + insert + current.slice(cursor);
+        const replaced =
+          detail?.replaceExisting === true ? replaceLatestSimInspectBlock(current, markdown) : null;
+        const nextPrompt =
+          replaced ??
+          (() => {
+            const prefix = current.slice(0, cursor);
+            const suffix = current.slice(cursor);
+            const leading = prefix.length === 0 || prefix.endsWith("\n") ? "" : "\n";
+            return `${prefix}${leading}${markdown}\n\n${suffix}`;
+          })();
         setPrompt(nextPrompt);
         promptRef.current = nextPrompt;
-        const nextCollapsed = collapseExpandedComposerCursor(nextPrompt, cursor + insert.length);
+        const nextExpandedCursor =
+          replaced === null
+            ? cursor + nextPrompt.length - current.length
+            : Math.min(cursor, nextPrompt.length);
+        const nextCollapsed = collapseExpandedComposerCursor(nextPrompt, nextExpandedCursor);
         setComposerCursor(nextCollapsed);
-        window.requestAnimationFrame(() => {
-          composerEditorRef.current?.focusAt(nextCollapsed);
-        });
+        if (detail?.focusComposer !== false) {
+          window.requestAnimationFrame(() => {
+            composerEditorRef.current?.focusAt(nextCollapsed);
+          });
+        }
       }
-      window.addEventListener("simpane:source-reference", handleSimPaneRef);
-      return () => window.removeEventListener("simpane:source-reference", handleSimPaneRef);
+      window.addEventListener(SIM_PANE_SOURCE_REFERENCE_EVENT, handleSimPaneRef);
+      return () => window.removeEventListener(SIM_PANE_SOURCE_REFERENCE_EVENT, handleSimPaneRef);
     }, [setPrompt, promptRef]);
 
     // ------------------------------------------------------------------

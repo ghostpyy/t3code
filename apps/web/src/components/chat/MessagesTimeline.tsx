@@ -305,69 +305,84 @@ function TimelineRowContent({ row }: { row: TimelineRow }) {
           const terminalContexts = displayedUserMessage.contexts;
           const canRevertAgentWork = typeof row.revertTurnCount === "number";
           return (
-            <div className="flex justify-end">
-              <div className="group relative max-w-[80%] rounded-2xl rounded-br-sm border border-border bg-secondary px-4 py-3">
-                {userImages.length > 0 && (
-                  <div className="mb-2 grid max-w-[420px] grid-cols-2 gap-2">
-                    {userImages.map(
-                      (image: NonNullable<TimelineMessage["attachments"]>[number]) => (
-                        <div
-                          key={image.id}
-                          className="overflow-hidden rounded-lg border border-border/80 bg-background/70"
-                        >
-                          {image.previewUrl ? (
-                            <button
-                              type="button"
-                              className="h-full w-full cursor-zoom-in"
-                              aria-label={`Preview ${image.name}`}
-                              onClick={() => {
-                                const preview = buildExpandedImagePreview(userImages, image.id);
-                                if (!preview) return;
-                                ctx.onImageExpand(preview);
-                              }}
+            <div className="flex justify-end pl-10 sm:pl-16">
+              <div className="group flex w-fit max-w-[min(88%,46rem)] flex-col items-end gap-1.5">
+                <div className="relative">
+                  <div className="relative z-10 overflow-hidden rounded-[22px] rounded-br-[6px] bg-[linear-gradient(180deg,#2b98ff_0%,#1788f5_55%,#0a7dff_100%)] px-4 py-3 text-white shadow-[0_14px_28px_-20px_rgba(10,125,255,0.75)] ring-1 ring-sky-100/20">
+                    <div
+                      aria-hidden
+                      className="pointer-events-none absolute inset-x-0 top-0 h-10 bg-[linear-gradient(180deg,rgba(255,255,255,0.16),rgba(255,255,255,0.04)_45%,rgba(255,255,255,0))]"
+                    />
+                    {userImages.length > 0 && (
+                      <div className="mb-2.5 grid max-w-[420px] grid-cols-2 gap-2">
+                        {userImages.map(
+                          (image: NonNullable<TimelineMessage["attachments"]>[number]) => (
+                            <div
+                              key={image.id}
+                              className="overflow-hidden rounded-[22px] border border-white/22 bg-white/12 shadow-[inset_0_1px_0_rgba(255,255,255,0.14)]"
                             >
-                              <img
-                                src={image.previewUrl}
-                                alt={image.name}
-                                className="block h-auto max-h-[220px] w-full object-cover"
-                              />
-                            </button>
-                          ) : (
-                            <div className="flex min-h-[72px] items-center justify-center px-2 py-3 text-center text-[11px] text-muted-foreground/70">
-                              {image.name}
+                              {image.previewUrl ? (
+                                <button
+                                  type="button"
+                                  className="h-full w-full cursor-zoom-in"
+                                  aria-label={`Preview ${image.name}`}
+                                  onClick={() => {
+                                    const preview = buildExpandedImagePreview(userImages, image.id);
+                                    if (!preview) return;
+                                    ctx.onImageExpand(preview);
+                                  }}
+                                >
+                                  <img
+                                    src={image.previewUrl}
+                                    alt={image.name}
+                                    className="block h-auto max-h-[220px] w-full object-cover"
+                                  />
+                                </button>
+                              ) : (
+                                <div className="flex min-h-[72px] items-center justify-center px-2 py-3 text-center text-[11px] text-white/72">
+                                  {image.name}
+                                </div>
+                              )}
                             </div>
-                          )}
-                        </div>
-                      ),
+                          ),
+                        )}
+                      </div>
+                    )}
+                    {(displayedUserMessage.visibleText.trim().length > 0 ||
+                      terminalContexts.length > 0) && (
+                      <UserMessageBody
+                        text={displayedUserMessage.visibleText}
+                        terminalContexts={terminalContexts}
+                        className="text-[15px] leading-[1.36] font-medium text-white [text-wrap:pretty]"
+                      />
                     )}
                   </div>
-                )}
-                {(displayedUserMessage.visibleText.trim().length > 0 ||
-                  terminalContexts.length > 0) && (
-                  <UserMessageBody
-                    text={displayedUserMessage.visibleText}
-                    terminalContexts={terminalContexts}
-                  />
-                )}
-                <div className="mt-1.5 flex items-center justify-end gap-2">
-                  <div className="flex items-center gap-1.5 opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
+                </div>
+                <div className="flex min-h-6 items-center justify-end gap-1.5 pr-1">
+                  <div className="flex items-center gap-1 opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
                     {displayedUserMessage.copyText && (
-                      <MessageCopyButton text={displayedUserMessage.copyText} />
+                      <MessageCopyButton
+                        text={displayedUserMessage.copyText}
+                        size="icon-xs"
+                        variant="ghost"
+                        className="rounded-full border border-border/35 bg-background/55 text-muted-foreground/70 shadow-none hover:border-border/60 hover:bg-background/78 hover:text-foreground/85"
+                      />
                     )}
                     {canRevertAgentWork && (
                       <Button
                         type="button"
-                        size="xs"
-                        variant="outline"
+                        size="icon-xs"
+                        variant="ghost"
                         disabled={ctx.isRevertingCheckpoint || ctx.isWorking}
                         onClick={() => ctx.onRevertUserMessage(row.message.id)}
                         title="Revert to this message"
+                        className="rounded-full border border-border/35 bg-background/55 text-muted-foreground/70 shadow-none hover:border-border/60 hover:bg-background/78 hover:text-foreground/85"
                       >
                         <Undo2Icon className="size-3" />
                       </Button>
                     )}
                   </div>
-                  <p className="text-right text-xs text-muted-foreground/50">
+                  <p className="pr-0.5 text-right text-[11px] font-medium tracking-[0.01em] text-muted-foreground/45">
                     {formatTimestamp(row.message.createdAt, ctx.timestampFormat)}
                   </p>
                 </div>
@@ -684,6 +699,7 @@ const UserMessageTerminalContextInlineLabel = memo(
 const UserMessageBody = memo(function UserMessageBody(props: {
   text: string;
   terminalContexts: ParsedTerminalContextEntry[];
+  className?: string;
 }) {
   if (props.terminalContexts.length > 0) {
     const hasEmbeddedInlineLabels = textContainsInlineTerminalContextLabels(
@@ -729,7 +745,12 @@ const UserMessageBody = memo(function UserMessageBody(props: {
         }
 
         return (
-          <div className="whitespace-pre-wrap wrap-break-word text-sm leading-relaxed text-foreground">
+          <div
+            className={cn(
+              "whitespace-pre-wrap wrap-break-word text-sm leading-relaxed text-foreground",
+              props.className,
+            )}
+          >
             {inlineNodes}
           </div>
         );
@@ -757,7 +778,12 @@ const UserMessageBody = memo(function UserMessageBody(props: {
     }
 
     return (
-      <div className="whitespace-pre-wrap wrap-break-word text-sm leading-relaxed text-foreground">
+      <div
+        className={cn(
+          "whitespace-pre-wrap wrap-break-word text-sm leading-relaxed text-foreground",
+          props.className,
+        )}
+      >
         {inlineNodes}
       </div>
     );
@@ -768,7 +794,12 @@ const UserMessageBody = memo(function UserMessageBody(props: {
   }
 
   return (
-    <div className="whitespace-pre-wrap wrap-break-word text-sm leading-relaxed text-foreground">
+    <div
+      className={cn(
+        "whitespace-pre-wrap wrap-break-word text-sm leading-relaxed text-foreground",
+        props.className,
+      )}
+    >
       {props.text}
     </div>
   );

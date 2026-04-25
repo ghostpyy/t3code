@@ -3,13 +3,23 @@ import { getLocalStorageItem, setLocalStorageItem, useLocalStorage } from "./hoo
 import { useMemo } from "react";
 
 const LAST_EDITOR_KEY = "t3code:last-editor";
+const DEFAULT_EDITOR: EditorId = "zed";
+
+// Prefer the user's last editor; otherwise Zed; otherwise the first installed
+// editor listed in EDITORS order. Centralised so the hook and the async
+// resolver can't disagree about the default.
+function pickDefaultEditor(available: Iterable<EditorId>): EditorId | null {
+  const set = available instanceof Set ? available : new Set(available);
+  if (set.has(DEFAULT_EDITOR)) return DEFAULT_EDITOR;
+  return EDITORS.find((editor) => set.has(editor.id))?.id ?? null;
+}
 
 export function usePreferredEditor(availableEditors: ReadonlyArray<EditorId>) {
   const [lastEditor, setLastEditor] = useLocalStorage(LAST_EDITOR_KEY, null, EditorId);
 
   const effectiveEditor = useMemo(() => {
     if (lastEditor && availableEditors.includes(lastEditor)) return lastEditor;
-    return EDITORS.find((editor) => availableEditors.includes(editor.id))?.id ?? null;
+    return pickDefaultEditor(availableEditors);
   }, [lastEditor, availableEditors]);
 
   return [effectiveEditor, setLastEditor] as const;
@@ -21,7 +31,7 @@ export function resolveAndPersistPreferredEditor(
   const availableEditorIds = new Set(availableEditors);
   const stored = getLocalStorageItem(LAST_EDITOR_KEY, EditorId);
   if (stored && availableEditorIds.has(stored)) return stored;
-  const editor = EDITORS.find((editor) => availableEditorIds.has(editor.id))?.id ?? null;
+  const editor = pickDefaultEditor(availableEditorIds);
   if (editor) setLocalStorageItem(LAST_EDITOR_KEY, editor, EditorId);
   return editor ?? null;
 }

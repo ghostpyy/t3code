@@ -218,13 +218,17 @@ function Toasts({ position = "top-right" }: { position: ToastPosition }) {
     <Toast.Portal data-slot="toast-portal">
       <Toast.Viewport
         className={cn(
-          "fixed z-100 mx-auto flex w-[calc(100%-var(--toast-inset)*2)] max-w-90 [--toast-header-offset:52px] [--toast-inset:--spacing(4)] sm:[--toast-inset:--spacing(8)]",
+          // `--sim-rail-gap` (published by SimPaneRail) reserves the right-side
+          // column occupied by the native CALayerHost NSView, which otherwise
+          // covers any toast dropped into that area. Falls back to 0 when the
+          // rail is hidden.
+          "fixed z-100 mx-auto flex w-[calc(100%-var(--toast-inset)*2-var(--sim-rail-gap,0px))] max-w-90 [--toast-header-offset:52px] [--toast-inset:--spacing(4)] sm:[--toast-inset:--spacing(8)]",
           // Vertical positioning
           "data-[position*=top]:top-[calc(var(--toast-inset)+var(--toast-header-offset))]",
           "data-[position*=bottom]:bottom-(--toast-inset)",
           // Horizontal positioning
           "data-[position*=left]:left-(--toast-inset)",
-          "data-[position*=right]:right-(--toast-inset)",
+          "data-[position*=right]:right-[calc(var(--toast-inset)+var(--sim-rail-gap,0px))]",
           "data-[position*=center]:-translate-x-1/2 data-[position*=center]:left-1/2",
         )}
         data-position={position}

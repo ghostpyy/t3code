@@ -328,6 +328,14 @@ const createDesktopBridgeStub = (overrides?: {
       .fn()
       .mockResolvedValue({ accepted: false, completed: false, state: idleUpdateState }),
     onUpdateState: () => () => {},
+    simulator: {
+      setBounds: vi.fn().mockResolvedValue(undefined),
+      setMode: vi.fn().mockResolvedValue(undefined),
+      setOutlines: vi.fn().mockResolvedValue(undefined),
+      sendMessage: vi.fn().mockResolvedValue(undefined),
+      onMessage: () => () => {},
+      screenshotToClipboard: vi.fn().mockResolvedValue(false),
+    },
   };
 };
 
