@@ -75,7 +75,13 @@ jobs:
           echo "tag=v$next_version" >> "$GITHUB_OUTPUT"
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        # --ignore-scripts dodges the effect-codex-app-server prepare script,
+        # which races against bun's hoisted typescript and fails with
+        # `UnableToFindPackageError` in fresh CI checkouts (same workaround
+        # scripts/sync-upstream.sh uses). build-desktop-artifact.ts runs its
+        # own `bun install --production` in the staging dir later, so any
+        # postinstall hooks the actual artifact needs still run there.
+        run: bun install --frozen-lockfile --ignore-scripts
 
       - name: Align package versions to fork version
         run: node scripts/update-release-package-versions.ts "${{ steps.version.outputs.version }}"
