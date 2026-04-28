@@ -13,7 +13,7 @@
     },
     "apps/desktop": {
       "name": "@t3tools/desktop",
-      "version": "0.0.28",
+      "version": "0.0.21",
       "dependencies": {
         "effect": "catalog:",
         "electron": "40.6.0",
@@ -52,7 +52,7 @@
     },
     "apps/server": {
       "name": "t3",
-      "version": "0.0.28",
+      "version": "0.0.21",
       "bin": {
         "t3": "./dist/bin.mjs",
       },

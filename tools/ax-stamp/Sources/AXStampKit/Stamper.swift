@@ -95,11 +95,39 @@ final class InspectableRewriter: SyntaxRewriter {
     fileprivate var userActionTrailingTypes: Set<String> = []
 
     override func visit(_ node: SourceFileSyntax) -> SourceFileSyntax {
+        // Inspector source file: a file that declares
+        // `extension View { func inspectable(...) -> some View }` IS the
+        // `.inspectable()` modifier's implementation. Stamping anything in
+        // it — including private `var body: some View` helpers like the
+        // probe view that backs each call — produces infinite runtime
+        // recursion (every probe's body would re-call `.inspectable()`,
+        // re-instantiating itself). Skip the whole file structurally
+        // instead of relying on per-file or per-name skip lists.
+        if declaresInspectableExtension(node) {
+            return InspectableStripper()
+                .rewrite(Syntax(node))
+                .as(SourceFileSyntax.self) ?? node
+        }
         let scanner = ViewBuilderParameterScanner(viewMode: .all)
         scanner.walk(node)
         userBuilderFunctions = scanner.builderFunctionNames
         userActionTrailingTypes = scanner.userActionTrailingTypes
         return super.visit(node)
+    }
+
+    private func declaresInspectableExtension(_ node: SourceFileSyntax) -> Bool {
+        for stmt in node.statements {
+            guard let ext = stmt.item.as(ExtensionDeclSyntax.self),
+                  ext.extendedType.as(IdentifierTypeSyntax.self)?.name.text == "View"
+            else { continue }
+            for member in ext.memberBlock.members {
+                if let fn = member.decl.as(FunctionDeclSyntax.self),
+                   fn.name.text == "inspectable" {
+                    return true
+                }
+            }
+        }
+        return false
     }
 
     override func visit(_ node: PatternBindingSyntax) -> PatternBindingSyntax {
