@@ -130,7 +130,7 @@ final class Coordinator {
 
         let monitor = BootMonitor(device: simDevice)
         let handler: @Sendable (BootStatus) -> Void = { [weak self] status in
-            Task { @MainActor in
+            Task { @MainActor [weak self] in
                 guard let self else { return }
                 let state: DeviceState = status == .booted ? .booted : device.state
                 self.send(.deviceState(udid: udid, state: state, bootStatus: status.label))
