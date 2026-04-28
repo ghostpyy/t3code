@@ -211,7 +211,7 @@ final class Coordinator {
         display = d
         try d.attach(
             onSurface: { [weak self] surface, info in
-                DispatchQueue.main.async {
+                DispatchQueue.main.async { [weak self] in
                     guard let self else { return }
                     self.currentInfo = info
                     let orientation = Self.displayOrientation(
@@ -224,7 +224,7 @@ final class Coordinator {
                 }
             },
             onDamage: { [weak self] in
-                DispatchQueue.main.async { self?.layerBridge.invalidate() }
+                DispatchQueue.main.async { [weak self] in self?.layerBridge.invalidate() }
             }
         )
         wireAuxiliaryServices(simDevice: simDevice)
@@ -270,14 +270,15 @@ final class Coordinator {
             autoreleasepool {
                 do {
                     let hid = try HIDClient(device: simDevice)
-                    DispatchQueue.main.async { self?.hid = hid }
+                    DispatchQueue.main.async { [weak self] in self?.hid = hid }
                 } catch {
                     let msg = error.localizedDescription
-                    DispatchQueue.main.async {
+                    DispatchQueue.main.async { [weak self] in
                         self?.emitError(code: "hid.unavailable", message: msg)
                     }
                 }
             }
+            _ = self
         }
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
@@ -286,7 +287,7 @@ final class Coordinator {
                     let bridge = try Bridge(device: simDevice)
                     let inspector = Inspector(bridge: bridge)
                     inspector.enable()
-                    DispatchQueue.main.async {
+                    DispatchQueue.main.async { [weak self] in
                         self?.bridge = bridge
                         self?.inspector = inspector
                     }
@@ -295,15 +296,15 @@ final class Coordinator {
                     FileHandle.standardError.write(
                         Data("[bridge] legacy SimulatorBridge init failed: \(desc) — trying AXPTranslator\n".utf8)
                     )
-                    _ = self
                 }
             }
+            _ = self
         }
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             autoreleasepool {
                 let axi = AXInspector(device: simDevice)
-                DispatchQueue.main.async {
+                DispatchQueue.main.async { [weak self] in
                     self?.axInspector = axi
                     if axi != nil {
                         FileHandle.standardError.write(Data(
@@ -311,6 +312,7 @@ final class Coordinator {
                     }
                 }
             }
+            _ = self
         }
     }
 
@@ -336,10 +338,11 @@ final class Coordinator {
             } catch {
                 FileHandle.standardError.write(Data("[hid] performTap ERROR: \(error)\n".utf8))
                 let desc = error.localizedDescription
-                DispatchQueue.main.async {
+                DispatchQueue.main.async { [weak self] in
                     self?.emitError(code: "input.tap", message: desc)
                 }
             }
+            _ = self
         }
     }
 
@@ -376,10 +379,11 @@ final class Coordinator {
                 try hid.send(messagePointer: msg)
             } catch {
                 let desc = error.localizedDescription
-                DispatchQueue.main.async {
+                DispatchQueue.main.async { [weak self] in
                     self?.emitError(code: "input.key", message: desc)
                 }
             }
+            _ = self
         }
     }
 
@@ -421,10 +425,11 @@ final class Coordinator {
                 try hid.send(messagePointer: msg)
             } catch {
                 let desc = error.localizedDescription
-                DispatchQueue.main.async {
+                DispatchQueue.main.async { [weak self] in
                     self?.emitError(code: "input.button", message: desc)
                 }
             }
+            _ = self
         }
     }
 

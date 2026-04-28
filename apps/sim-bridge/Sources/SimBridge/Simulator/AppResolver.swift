@@ -33,7 +33,7 @@ enum AppResolver {
     }
 
     private static let cacheLock = NSLock()
-    private static var cache: [String: CacheEntry] = [:]
+    nonisolated(unsafe) private static var cache: [String: CacheEntry] = [:]
 
     static func resolve(udid: String, displayId: UInt32 = 0) -> SimAppInfo? {
         let pid = T3AXForegroundAppPID(displayId)

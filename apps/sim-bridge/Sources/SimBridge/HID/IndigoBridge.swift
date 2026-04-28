@@ -13,7 +13,11 @@ public struct IndigoMessageHandle {
 
 /// Loads SimulatorKit at runtime, resolves the Indigo C helpers, and exposes
 /// Swift-friendly message constructors.
-public final class IndigoBridge {
+///
+/// `@unchecked Sendable`: state is set once via `load()` from the main queue
+/// and read-only thereafter. Subsequent message-builder calls are pure
+/// reads against the resolved C symbol pointers.
+public final class IndigoBridge: @unchecked Sendable {
     public static let shared = IndigoBridge()
 
     private var handle: UnsafeMutableRawPointer?

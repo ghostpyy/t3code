@@ -89,7 +89,7 @@ public final class Display: @unchecked Sendable {
         Self.log("framebuffer service class=\(NSStringFromClass(type(of: service)))")
         let client = FramebufferClient(
             onSurface: { [weak self] surface in
-                self?.queue.async {
+                self?.queue.async { [weak self] in
                     self?.publishSurface(surface)
                 }
             },
@@ -121,7 +121,7 @@ public final class Display: @unchecked Sendable {
 
         let consumer = FramebufferClient(
             onSurface: { [weak self] surface in
-                self?.queue.async {
+                self?.queue.async { [weak self] in
                     self?.publishSurface(surface)
                 }
             },
@@ -492,7 +492,7 @@ public final class Display: @unchecked Sendable {
         // thunk read x1 as an object pointer and objc_retain it — crashes
         // when x1 holds a uint value, not a heap pointer.
         let disconnected: @convention(block) (UInt32) -> Void = { [weak self] _ in
-            self?.queue.async { self?.unbindScreen() }
+            self?.queue.async { [weak self] in self?.unbindScreen() }
         }
         let uuid = UUID()
         adapterUUID = uuid
