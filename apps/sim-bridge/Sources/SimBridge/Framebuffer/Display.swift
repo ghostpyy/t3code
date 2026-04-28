@@ -1,5 +1,5 @@
 import Foundation
-import ObjectiveC.runtime
+@preconcurrency import ObjectiveC.runtime
 import CPrivate
 import CSupport
 @preconcurrency import IOSurface
