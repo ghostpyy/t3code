@@ -33,7 +33,9 @@ jobs:
   build:
     name: Build and publish fork release
     if: github.repository == 'ghostpyy/t3code'
-    runs-on: macos-14
+    # macos-15 ships Xcode 16 / Swift 6 by default. macos-14 only has Swift
+    # 5.10, which rejects the sim-bridge package's `swift-tools-version:6.0`.
+    runs-on: macos-15
     timeout-minutes: 45
 
     steps:
